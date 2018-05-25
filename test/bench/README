@@ -1,0 +1,4 @@
+createdb test
+pgbench -h localhost -U test_gtt1 -c 20 -j 4 -T 60 -f test/bench/local_temp1.bench test
+pgbench -h localhost -U test_gtt1 -c 20 -j 4 -T 60 -f test/bench/local2_temp.bench test
+pgbench -h localhost -U test_gtt1 -c 20 -j 4 -T 60 -f test/bench/global_temp.bench test

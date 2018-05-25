@@ -1,0 +1,106 @@
+Oracle-style Global temporary tables.
+
+To display all Oracle global temporary tables:
+
+	SELECT table_name FROM all_tables WHERE temporary = 'Y';
+
+To know if rows are presistent or not:
+
+	SELECT duration FROM all_tables WHERE table_name='MY_TEMP_TABLE'
+
+	DURATION
+	---------------
+	SYS$TRANSACTION
+	SYS$TRANSACTION
+
+Type of DURATION:
+
+	SYS$SESSION - Rows are preserved for the duration of the session
+	SYS$TRANSACTION - Rows are deleted after COMMIT
+	NULL - Permanent table
+
+
+Example of use:
+
+	CREATE GLOBAL TEMPORARY TABLE my_temp_table(column1 number) ON COMMIT PRESERVE ROWS;    
+
+	INSERT INTO my_temp_table (column1) VALUES (1);
+	SELECT * FROM my_temp_table;   
+
+
+REF/ https://oracle-base.com/articles/misc/temporary-tables
+
+
+Create global temporary table with transaction scope:
+
+	CREATE GLOBAL TEMPORARY TABLE TABLE_GTT_TRANSACTION
+	(
+	    PKID NUMBER(1,0) NOT NULL
+	,   CODE VARCHAR(2) NOT NULL
+	) ON COMMIT DELETE ROWS;
+
+
+Create global temporary table with session scope:
+
+	CREATE GLOBAL TEMPORARY TABLE TABLE_GTT_SESSION
+	(
+	    PKID NUMBER(1,0) NOT NULL
+	,   CODE VARCHAR(2) NOT NULL
+	) ON COMMIT PRESERVE ROWS;
+
+
+https://www.techonthenet.com/oracle/tables/global_temp.php
+
+Syntax
+
+The syntax for Oracle CREATE GLOBAL TEMPORARY TABLE is:
+
+CREATE GLOBAL TEMPORARY TABLE table_name
+( column1 datatype [ NULL | NOT NULL ],
+  column2 datatype [ NULL | NOT NULL ],
+  ...
+  column_n datatype [ NULL | NOT NULL ]
+);
+
+Example
+
+Let's look at an Oracle CREATE GLOBAL TEMPORARY TABLE example:
+
+CREATE GLOBAL TEMPORARY TABLE suppliers
+( supplier_id numeric(10) NOT NULL,
+  supplier_name varchar2(50) NOT NULL,
+  contact_name varchar2(50)
+);
+
+
+
+http://www.dba-oracle.com/t_global_temporary_tables.htm
+
+drop table store_sales;
+drop table store_cnt;
+drop table store_qty;
+
+create global temporary table store_qty 
+on commit preserve rows 
+as select sum(quantity) all_sales from sales;
+
+create global temporary table store_cnt 
+on commit preserve rows 
+as select count(*) nbr_stores from store;
+
+create global temporary table store_sales 
+on commit preserve rows 
+as select store_name, sum(quantity) store_sales 
+from store natural join sales group by store_name;
+
+select 
+   store_name, 
+   store_sales, 
+   all_sales / nbr_stores avg_sales
+from 
+   store_qty, 
+   store_cnt, 
+   store_sales
+where 
+   store_sales > (all_sales / nbr_stores);
+

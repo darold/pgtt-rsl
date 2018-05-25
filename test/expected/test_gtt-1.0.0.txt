@@ -1,0 +1,277 @@
+CREATE ROLE
+CREATE ROLE
+CREATE DATABASE
+You are now connected to database "gtt_testdb" as user "gilles".
+CREATE EXTENSION
+ pgtt_create_table 
+-------------------
+ t
+(1 row)
+
+GRANT
+ pgtt_create_table 
+-------------------
+ t
+(1 row)
+
+GRANT
+You are now connected to database "gtt_testdb" as user "test_gtt1".
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt2".
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt1".
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "postgres".
+ count 
+-------
+     9
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt2".
+DELETE 0
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+DELETE 3
+ count 
+-------
+     0
+(1 row)
+
+INSERT 0 3
+UPDATE 3
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+UPDATE 3
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "postgres".
+ count 
+-------
+    12
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt1".
+BEGIN
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+INSERT 0 3
+ count 
+-------
+     6
+(1 row)
+
+ count 
+-------
+     6
+(1 row)
+
+COMMIT
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt2".
+BEGIN
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+DELETE 3
+ count 
+-------
+     0
+(1 row)
+
+COMMIT
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt2".
+BEGIN
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+UPDATE 3
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+COMMIT
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+BEGIN
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+ROLLBACK
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "postgres".
+ count 
+-------
+     9
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+psql:test/test_gtt-1.0.0.sql:208: NOTICE:  drop cascades to view t_glob_temptable1
+ pgtt_drop_table 
+-----------------
+ t
+(1 row)
+
+psql:test/test_gtt-1.0.0.sql:211: NOTICE:  drop cascades to view t_glob_temptable2
+ pgtt_drop_table 
+-----------------
+ t
+(1 row)
+
+You are now connected to database "postgres" as user "postgres".
+DROP DATABASE
+DROP ROLE
+DROP ROLE

@@ -1,0 +1,40 @@
+-- Create this function first in the test database:
+--
+-- CREATE OR REPLACE FUNCTION test_temp_table ()
+-- RETURNS boolean
+-- AS $$
+-- BEGIN
+--
+--      CREATE TEMPORARY TABLE t1(id int, lbl text)ON COMMIT DROP;
+--      INSERT INTO t1 (id, lbl) SELECT i, md5(i::text) FROM generate_series(1, 10000) i;
+--      PERFORM * FROM t1 ;
+--         RETURN true;
+-- END;
+-- $$
+-- LANGUAGE plpgsql SECURITY DEFINER;
+
+SELECT test_temp_table();
+
+-- transaction type: test/bench/local_temp2.bench
+-- scaling factor: 1
+-- query mode: simple
+-- number of clients: 20
+-- number of threads: 4
+-- duration: 60 s
+-- number of transactions actually processed: 14496
+-- latency average = 82.901 ms
+-- tps = 241.250620 (including connections establishing)
+-- tps = 241.268262 (excluding connections establishing)
+--
+-- INSERT only:
+-- transaction type: test/local_temp2.bench
+-- scaling factor: 1
+-- query mode: simple
+-- number of clients: 20
+-- number of threads: 4
+-- duration: 60 s
+-- number of transactions actually processed: 15517
+-- latency average = 77.437 ms
+-- tps = 258.275703 (including connections establishing)
+-- tps = 258.293318 (excluding connections establishing)
+

@@ -1,0 +1,30 @@
+BEGIN;
+CREATE TEMPORARY TABLE t1(id int, lbl text);
+INSERT INTO t1 (id, lbl) SELECT i, md5(i::text) FROM generate_series(1, 10000) i;
+SELECT * FROM t1 ;
+DROP TABLE t1;
+COMMIT;
+
+-- transaction type: test/bench/local_temp1.bench
+-- scaling factor: 1
+-- query mode: simple
+-- number of clients: 20
+-- number of threads: 4
+-- duration: 60 s
+-- number of transactions actually processed: 10780
+-- latency average = 111.452 ms
+-- tps = 179.449391 (including connections establishing)
+-- tps = 179.459616 (excluding connections establishing)
+--
+-- INSERT only:
+-- transaction type: test/local_temp.bench
+-- scaling factor: 1
+-- query mode: simple
+-- number of clients: 20
+-- number of threads: 4
+-- duration: 60 s
+-- number of transactions actually processed: 15450
+-- latency average = 77.777 ms
+-- tps = 257.146917 (including connections establishing)
+-- tps = 257.163559 (excluding connections establishing)
+
