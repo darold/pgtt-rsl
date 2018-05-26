@@ -14,7 +14,7 @@ PG_LDFLAGS = -L$(libpq_builddir) -lpq
 SHLIB_LINK = $(libpq)
 
 ifeq ($(PG94),yes)
-DOCS = $(wildcard doc/*.md)
+DOCS = $(wildcard doc/README*)
 MODULES = pgtt
 MODULE_big = pgtt_bgw
 OBJS = pgtt_bgw.o
