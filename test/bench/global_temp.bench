@@ -1,12 +1,7 @@
--- Execute the following commented query in the test database first:
---
--- CREATE USER test_gtt1;
--- CREATE EXTENSION pgtt;
--- SELECT pgtt_schema.pgtt_create_table('t1', 'id integer, lbl text', true);
--- GRANT ALL ON t1 TO test_gtt1;
-
+BEGIN;
 INSERT INTO t1 (id, lbl) SELECT i, md5(i::text) FROM generate_series(1, 10000) i;
 SELECT * FROM t1;
+COMMIT;
 
 -- transaction type: test/local_temp3.bench
 -- scaling factor: 1
@@ -21,20 +16,20 @@ SELECT * FROM t1;
 -- 
 -- INSERT only with index on pgtt_sessid:
 --
--- transaction type: test/local_temp3.bench
+-- transaction type: test/bench/global_temp.bench
 -- scaling factor: 1
 -- query mode: simple
 -- number of clients: 20
 -- number of threads: 4
 -- duration: 60 s
--- number of transactions actually processed: 4483
--- latency average = 268.754 ms
--- tps = 74.417564 (including connections establishing)
--- tps = 74.427747 (excluding connections establishing)
+-- number of transactions actually processed: 864
+-- latency average = 1424.550 ms
+-- tps = 14.039523 (including connections establishing)
+-- tps = 14.041116 (excluding connections establishing)
 -- 
 -- INSERT only without index:
 --
--- transaction type: test/local_temp3.bench
+-- transaction type: test/global_temp.bench
 -- scaling factor: 1
 -- query mode: simple
 -- number of clients: 20

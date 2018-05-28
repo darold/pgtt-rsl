@@ -8,7 +8,7 @@
 --      CREATE TEMPORARY TABLE t1(id int, lbl text)ON COMMIT DROP;
 --      INSERT INTO t1 (id, lbl) SELECT i, md5(i::text) FROM generate_series(1, 10000) i;
 --      PERFORM * FROM t1 ;
---         RETURN true;
+--      RETURN true;
 -- END;
 -- $$
 -- LANGUAGE plpgsql SECURITY DEFINER;
