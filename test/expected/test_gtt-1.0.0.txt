@@ -259,13 +259,11 @@ You are now connected to database "gtt_testdb" as user "postgres".
      0
 (1 row)
 
-psql:test/test_gtt-1.0.0.sql:208: NOTICE:  drop cascades to view t_glob_temptable1
  pgtt_drop_table 
 -----------------
  t
 (1 row)
 
-psql:test/test_gtt-1.0.0.sql:211: NOTICE:  drop cascades to view t_glob_temptable2
  pgtt_drop_table 
 -----------------
  t

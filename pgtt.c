@@ -31,11 +31,10 @@
 #include "access/htup_details.h"
 #include "executor/spi.h"
 #include "storage/proc.h"
+#include "utils/builtins.h"
 
 #if PG_VERSION_NUM >= 100000
 #include "utils/regproc.h"
-#else
-#include "utils/builtins.h"
 #endif
 
 #define CATALOG_GLOBAL_TEMP_REL	"pgtt_global_temp"
@@ -45,8 +44,8 @@
 
 PG_MODULE_MAGIC;
 
-PGDLLEXPORT Datum pgtt_register_metainfo(PG_FUNCTION_ARGS);
-PG_FUNCTION_INFO_V1(pgtt_register_metainfo);
+PGDLLEXPORT Datum get_session_id(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(get_session_id);
 
 /* Default schema where GTT objects are saved */
 #define PGTT_NSPNAME "pgtt_schema"
@@ -472,7 +471,13 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
 
 	/* Add pgtt_sessid column */
-	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s ADD COLUMN pgtt_sessid integer DEFAULT pg_backend_pid()", tbname);
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s ADD COLUMN pgtt_sessid text DEFAULT pgtt_schema.get_session_id()", tbname);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Create an index on pgtt_sessid column */
+	newQueryString = psprintf("CREATE INDEX ON pgtt_schema.%s (pgtt_sessid)", tbname);
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
@@ -495,7 +500,7 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 		 * to show only rows where pgtt_sessid is the same as
 		 * current pid.
 		 */
-		newQueryString = psprintf("CREATE POLICY pgtt_rls_session ON pgtt_schema.%s USING (pgtt_sessid = pg_backend_pid()) WITH CHECK (true)", tbname);
+		newQueryString = psprintf("CREATE POLICY pgtt_rls_session ON pgtt_schema.%s USING (pgtt_sessid = pgtt_schema.get_session_id()) WITH CHECK (true)", tbname);
 	else
 		/*
 		 * Create the policy that must be applied on the table
@@ -503,7 +508,7 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 		 * current pid and rows that have been created in the
 		 * current transaction.
 		 */
-		newQueryString = psprintf("CREATE POLICY pgtt_rls_transaction ON pgtt_schema.%s USING (pgtt_sessid = pg_backend_pid() AND xmin::text = txid_current()::text) WITH CHECK (true)", tbname);
+		newQueryString = psprintf("CREATE POLICY pgtt_rls_transaction ON pgtt_schema.%s USING (pgtt_sessid = pgtt_schema.get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)", tbname);
 
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
@@ -517,9 +522,9 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 
 	/* Create the view */
 	if (preserved)
-		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=pg_backend_pid()", stmt->relation->relname, colnames, tbname);
+		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=pgtt_schema.get_session_id()", stmt->relation->relname, colnames, tbname);
 	else
-		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=pg_backend_pid() AND xmin::text = txid_current()::text", stmt->relation->relname, colnames, tbname);
+		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=pgtt_schema.get_session_id() AND xmin::text = txid_current()::text", stmt->relation->relname, colnames, tbname);
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
@@ -708,5 +713,21 @@ gtt_unregister_global_temporary_table(Oid relid, const char *relname)
 	systable_endscan(scan);
 	heap_close(rel, RowExclusiveLock);
 
+}
+
+/*
+ * Function used to generate a unique session id composed
+ * with the timestamp (epoch) and the pid of the current
+ * backend
+ */ 
+Datum
+get_session_id(PG_FUNCTION_ARGS)
+{
+	StringInfoData buf;
+
+	initStringInfo(&buf);
+	appendStringInfo(&buf, "%lx.%x", (long) MyStartTime, MyProcPid);
+
+	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
 

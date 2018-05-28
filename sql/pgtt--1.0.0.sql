@@ -7,6 +7,8 @@ GRANT USAGE ON SCHEMA pgtt_schema TO PUBLIC;
 
 SET LOCAL search_path TO pgtt_schema,pg_catalog;
 
+CREATE FUNCTION get_session_id() RETURNS text AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE;
+
 ----
 -- Table for meta information about Global Temporary Table.
 --     - relid   : oid of the GTT table
@@ -69,7 +71,7 @@ BEGIN
 		EXECUTE format('CREATE UNLOGGED TABLE pgtt_schema.pgtt_%s AS %s', tb_name, code);
 	END IF;
 	-- Append pgtt_sessid "internal" column to the GTT table
-	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s ADD COLUMN pgtt_sessid integer DEFAULT pg_backend_pid()', tb_name);
+	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s ADD COLUMN pgtt_sessid text DEFAULT pgtt_schema.get_session_id()', tb_name);
 
 	-- Create an index on pgtt_sessid column, this will slow donw insert
 	-- but this will help lot for select with the view
@@ -86,13 +88,13 @@ BEGIN
 		-- Create the policy that must be applied on the table
 		-- to show only rows where pgtt_sessid is the same as
 		-- current pid.
-		EXECUTE format('CREATE POLICY pgtt_rls_session ON pgtt_schema.pgtt_%s USING (pgtt_sessid = pg_backend_pid()) WITH CHECK (true)', tb_name);
+		EXECUTE format('CREATE POLICY pgtt_rls_session ON pgtt_schema.pgtt_%s USING (pgtt_sessid = pgtt_schema.get_session_id()) WITH CHECK (true)', tb_name);
 	ELSE
 		-- Create the policy that must be applied on the table
 		-- to show only rows where pgtt_sessid is the same as
 		-- current pid and rows that have been created in the
 		-- current transaction.
-		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = pg_backend_pid() AND xmin::text = txid_current()::text) WITH CHECK (true)', tb_name);
+		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = pgtt_schema.get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)', tb_name);
 	END IF;
 	-- Force policy to be active for the owner of the table
 	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s FORCE ROW LEVEL SECURITY', tb_name);
@@ -106,9 +108,9 @@ BEGIN
 	-- only deal with this name, not the internal name of
 	-- the corresponding table prefixed with pgtt_.
 	IF preserved THEN
-		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=pg_backend_pid()', tb_name, column_list, tb_name);
+		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=pgtt_schema.get_session_id()', tb_name, column_list, tb_name);
 	ELSE
-		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=pg_backend_pid() AND xmin::text = txid_current()::text', tb_name, column_list, tb_name);
+		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=pgtt_schema.get_session_id() AND xmin::text = txid_current()::text', tb_name, column_list, tb_name);
 	END IF;
 
 	-- Set owner of the view to current user, not the function definer (superuser)
@@ -200,7 +202,7 @@ BEGIN
 		-- With a GTT that preserves tuples in an entire session
 		IF (class_info.preserved) THEN
 			-- delete rows from the GTT table that do not belong to an active session
-			EXECUTE 'DELETE FROM ' || class_info.relid::regclass || ' WHERE ctid = ANY(ARRAY(SELECT ctid FROM ' || class_info.relid::regclass || ' WHERE NOT (pgtt_sessid = ANY(ARRAY(SELECT pid FROM pg_stat_activity))) LIMIT ' || chunk_size || '))';
+			EXECUTE 'DELETE FROM ' || class_info.relid::regclass || ' WHERE ctid = ANY(ARRAY(SELECT ctid FROM ' || class_info.relid::regclass || ' WHERE NOT (pgtt_sessid = ANY(ARRAY(SELECT to_hex(extract(epoch from backend_start)::bigint) || ''.'' || to_hex(pid::integer) FROM pg_stat_activity))) LIMIT ' || chunk_size || '))';
 
 			GET DIAGNOSTICS nrows = ROW_COUNT;
 			total_nrows := total_nrows + nrows;
