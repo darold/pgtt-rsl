@@ -126,7 +126,9 @@ function the pgtt extension act as follow:
      with the "hidden" column for a GTT (pgtt_sessid).
      The table is stored in extension schema pgtt_schema and the users
      must not access to this table directly. They have to use the view
-     instead. The pgtt_sessid column has default to pg_backend_pid().
+     instead. The pgtt_sessid column has default to get_session_id(),
+     this function is part of the pgtt_extension and build a session
+     unique id from the backend start time (epoch) and the pid.
   2) grant SELECT,INSERT,UPDATE,DELETE on the table to PUBLIC.
   3) activate RLS on the table and create two RLS policies to hide rows
      to other sessions or transactions when required.
