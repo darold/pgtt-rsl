@@ -1,3 +1,6 @@
+-- complain if script is sourced in psql, rather than via CREATE EXTENSION
+\echo Use "CREATE EXTENSION pgtt" to load this file. \quit
+
 ----
 -- Create schema dedicated to the global temporary table
 ----
