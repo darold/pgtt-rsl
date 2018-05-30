@@ -153,6 +153,16 @@ to a GTT table and its corresponding view. When it is called it just
 execute a "DROP TABLE IF EXISTS pgtt_schema.pgtt_tbname CASCADE;".
 Using CASCADE will also drop the associated view.
 
+The exgtension also define four functions to manipulate the 'lsid' type:
+    
+* get_session_id(): generate the local session id and returns an lsid.
+* generate_lsid(int, int): generate a local session id based on a backend
+  start time (number of second since epoch) and a pid of the backend.
+  Returns an lsid.
+* get_session_start_time(lsid): returns the number of second since epoch
+  part of an lsid.
+* get_session_pid(lsid): returns the pid part of an lsid.
+
 Behind the background worker
 ============================
 
