@@ -163,6 +163,29 @@ The exgtension also define four functions to manipulate the 'lsid' type:
   part of an lsid.
 * get_session_pid(lsid): returns the pid part of an lsid.
 
+Here is an example of use of these functions:
+```
+test=# SELECT get_session_id();
+   get_session_id   
+--------------------
+ {1527703231,11007}
+
+test=# SELECT generate_lsid(1527703231,11007);
+   generate_lsid    
+--------------------
+ {1527703231,11007}
+
+test=# SELECT get_session_start_time(get_session_id());
+ get_session_start_time 
+------------------------
+             1527703231
+
+test=# SELECT get_session_pid(get_session_id());
+ get_session_pid 
+-----------------
+           11007
+```
+
 Behind the background worker
 ============================
 
