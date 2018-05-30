@@ -1,4 +1,4 @@
-To run the bench execute the following commands:
+# To run the bench execute the following commands:
 
 createdb test
 psql test -c "CREATE USER test_gtt1;"
@@ -6,7 +6,7 @@ psql test -c "CREATE EXTENSION pgtt;"
 psql test -c "SELECT pgtt_schema.pgtt_create_table('t1', 'id integer, lbl text', true);"
 psql test -c "GRANT ALL ON t1 TO test_gtt1;"
 
-pgbench -h localhost -U test_gtt1 -c 20 -j 4 -T 60 -f test/bench/local_temp1.bench test
-pgbench -h localhost -U test_gtt1 -c 20 -j 4 -T 60 -f test/bench/local2_temp.bench test
+#pgbench -h localhost -U test_gtt1 -c 20 -j 4 -T 60 -f test/bench/local_temp1.bench test
+#pgbench -h localhost -U test_gtt1 -c 20 -j 4 -T 60 -f test/bench/local2_temp.bench test
 pgbench -h localhost -U test_gtt1 -c 20 -j 4 -T 60 -f test/bench/global_temp.bench test
 
