@@ -259,14 +259,76 @@ You are now connected to database "gtt_testdb" as user "postgres".
      0
 (1 row)
 
+psql:test/test_gtt-1.0.0.sql:211: NOTICE:  drop cascades to view t_glob_temptable1
  pgtt_drop_table 
 -----------------
  t
 (1 row)
 
+psql:test/test_gtt-1.0.0.sql:214: NOTICE:  drop cascades to view t_glob_temptable2
  pgtt_drop_table 
 -----------------
  t
+(1 row)
+
+   generate_lsid    
+--------------------
+ {1527703231,11007}
+(1 row)
+
+ get_session_start_time 
+------------------------
+             1527703231
+(1 row)
+
+ get_session_pid 
+-----------------
+           11007
+(1 row)
+
+ ?column? 
+----------
+ f
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ f
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ f
+(1 row)
+
+ ?column? 
+----------
+ f
 (1 row)
 
 You are now connected to database "postgres" as user "postgres".

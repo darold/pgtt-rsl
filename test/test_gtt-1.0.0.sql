@@ -1,5 +1,8 @@
 ----
 -- Regression test to Global Temporary Table implementation
+--
+-- LANC=C psql -f test/test_gtt-1.0.0.sql > result.txt 2>&1
+-- diff result.txt test/expected/test_gtt-1.0.0.txt
 ----
 
 CREATE ROLE test_gtt1 LOGIN PASSWORD 'test_gtt1';
@@ -211,6 +214,34 @@ SELECT pgtt_schema.pgtt_drop_table('t_glob_temptable1');
 SELECT pgtt_schema.pgtt_drop_table('t_glob_temptable2');
 -- This syntax is not yet available
 -- DROP TABLE t_glob_temptable2;
+
+-- Tests of the LSID related functions
+-- Must return {1527703231,11007}
+SELECT generate_lsid(1527703231, 11007);
+-- Must return 1527703231
+SELECT get_session_start_time(generate_lsid(1527703231, 11007));
+-- Must return 11007
+SELECT get_session_pid(generate_lsid(1527703231, 11007));
+
+-- Tests of the custom operators
+-- Must return false
+SELECT generate_lsid(1527703231, 11007) > generate_lsid(1527703232, 11007);
+-- Must return true
+SELECT generate_lsid(1527703231, 11007) >= generate_lsid(1527703231, 11007);
+-- Must return true
+SELECT generate_lsid(1527703231, 11007) <= generate_lsid(1527703231, 11007);
+-- Must return true
+SELECT generate_lsid(1527703231,11007) > generate_lsid(1527703230,11007);
+-- Must return true
+SELECT generate_lsid(1527703231,11007) > generate_lsid(1527703231,11006);
+-- Must return false
+SELECT generate_lsid(1527703231,11007) > generate_lsid(1527703231,11008);
+-- Must return true
+SELECT generate_lsid(1527703231,11007) = generate_lsid(1527703231,11007);
+-- Must return false
+SELECT generate_lsid(1527703231,11007) = generate_lsid(1527703231,11008);
+-- Must return false
+SELECT generate_lsid(1527703231,11007) = generate_lsid(1527703230,11007);
 
 \c postgres
 
