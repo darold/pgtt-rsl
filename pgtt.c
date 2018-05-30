@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include "funcapi.h"
 #include "tcop/utility.h"
+#include "libpq/pqformat.h"
 #include "miscadmin.h"
 #include "catalog/catalog.h"
 #include "catalog/pg_authid.h"
@@ -22,6 +23,8 @@
 #include "catalog/indexing.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_type.h"
+#include "catalog/pg_operator.h"
 #include "utils/formatting.h"
 #include "utils/fmgroids.h"
 #include "utils/syscache.h"
@@ -44,8 +47,26 @@
 
 PG_MODULE_MAGIC;
 
-PGDLLEXPORT Datum get_session_id(PG_FUNCTION_ARGS);
+PGDLLEXPORT Datum   get_session_id(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(get_session_id);
+PGDLLEXPORT Datum   generate_lsid(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(generate_lsid);
+
+PGDLLEXPORT Datum   get_session_start_time(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(get_session_start_time);
+
+PGDLLEXPORT Datum   get_session_pid(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(get_session_pid);
+
+PG_FUNCTION_INFO_V1(lsid_in);
+PG_FUNCTION_INFO_V1(lsid_out);
+PG_FUNCTION_INFO_V1(lsid_recv);
+PG_FUNCTION_INFO_V1(lsid_send);
+
+typedef struct Lsid {
+    int      backend_start_time;
+    int      backend_pid;
+} Lsid;
 
 /* Default schema where GTT objects are saved */
 #define PGTT_NSPNAME "pgtt_schema"
@@ -75,8 +96,8 @@ static ProcessUtility_hook_type prev_ProcessUtility = NULL;
 
 /* Function declarations */
 
-void		_PG_init(void);
-void		_PG_fini(void);
+void	_PG_init(void);
+void	_PG_fini(void);
 
 static void gtt_ProcessUtility(GTT_PROCESSUTILITY_PROTO);
 static bool gtt_check_command(GTT_PROCESSUTILITY_PROTO);
@@ -471,7 +492,7 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
 
 	/* Add pgtt_sessid column */
-	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s ADD COLUMN pgtt_sessid text DEFAULT pgtt_schema.get_session_id()", tbname);
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s ADD COLUMN pgtt_sessid lsid DEFAULT get_session_id()", tbname);
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
@@ -500,7 +521,7 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 		 * to show only rows where pgtt_sessid is the same as
 		 * current pid.
 		 */
-		newQueryString = psprintf("CREATE POLICY pgtt_rls_session ON pgtt_schema.%s USING (pgtt_sessid = pgtt_schema.get_session_id()) WITH CHECK (true)", tbname);
+		newQueryString = psprintf("CREATE POLICY pgtt_rls_session ON pgtt_schema.%s USING (pgtt_sessid = get_session_id()) WITH CHECK (true)", tbname);
 	else
 		/*
 		 * Create the policy that must be applied on the table
@@ -508,7 +529,7 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 		 * current pid and rows that have been created in the
 		 * current transaction.
 		 */
-		newQueryString = psprintf("CREATE POLICY pgtt_rls_transaction ON pgtt_schema.%s USING (pgtt_sessid = pgtt_schema.get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)", tbname);
+		newQueryString = psprintf("CREATE POLICY pgtt_rls_transaction ON pgtt_schema.%s USING (pgtt_sessid = get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)", tbname);
 
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
@@ -522,9 +543,9 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 
 	/* Create the view */
 	if (preserved)
-		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=pgtt_schema.get_session_id()", stmt->relation->relname, colnames, tbname);
+		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=get_session_id()", stmt->relation->relname, colnames, tbname);
 	else
-		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=pgtt_schema.get_session_id() AND xmin::text = txid_current()::text", stmt->relation->relname, colnames, tbname);
+		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=get_session_id() AND xmin::text = txid_current()::text", stmt->relation->relname, colnames, tbname);
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
@@ -685,11 +706,6 @@ search_relation(char *relname)
 static void
 gtt_unregister_global_temporary_table(Oid relid, const char *relname)
 {
-	/* 
-	 * pour le delete:
-	 * https://github.com/postgrespro/postgres_cluster/blob/master/contrib/pglogical/pglogical_sync.c
-	 * ligne 1093
-	 */
 	RangeVar     *rv;
 	Relation      rel;
 	ScanKeyData   key[1];
@@ -716,18 +732,211 @@ gtt_unregister_global_temporary_table(Oid relid, const char *relname)
 }
 
 /*
- * Function used to generate a unique session id composed
+ * Function used to generate a local session id composed
  * with the timestamp (epoch) and the pid of the current
- * backend
+ * backend.
  */ 
 Datum
 get_session_id(PG_FUNCTION_ARGS)
 {
-	StringInfoData buf;
+	Lsid       *res;
 
-	initStringInfo(&buf);
-	appendStringInfo(&buf, "%lx.%x", (long) MyStartTime, MyProcPid);
+	res = (Lsid *) palloc(sizeof(Lsid));
+	res->backend_start_time = (int) MyStartTime;
+	res->backend_pid = MyProcPid;
 
-	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+	PG_RETURN_POINTER(res);
+}
+
+Datum
+lsid_in(PG_FUNCTION_ARGS)
+{
+	char       *str = PG_GETARG_CSTRING(0);
+	int        backend_start_time,
+		   backend_pid;
+	Lsid       *res;
+
+	if (sscanf(str, "{ %d, %d }", &backend_start_time, &backend_pid) != 2)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+			 errmsg("invalid input syntax for local session id: \"%s\"",
+				str)));
+
+	res = (Lsid *) palloc(sizeof(Lsid));
+	res->backend_start_time = backend_start_time;
+	res->backend_pid = backend_pid;
+
+	PG_RETURN_POINTER(res);
+}
+
+Datum
+lsid_out(PG_FUNCTION_ARGS)
+{
+	Lsid    *lsid = (Lsid *) PG_GETARG_POINTER(0);
+	char       *res;
+
+	res = psprintf("{%d,%d}", lsid->backend_start_time, lsid->backend_pid);
+
+	PG_RETURN_CSTRING(res);
+}
+
+Datum
+lsid_recv(PG_FUNCTION_ARGS)
+{
+    StringInfo  buf = (StringInfo) PG_GETARG_POINTER(0);
+    Lsid    *res;
+
+    res = (Lsid *) palloc(sizeof(Lsid));
+    res->backend_start_time = pq_getmsgint(buf, sizeof(int32));
+    res->backend_pid = pq_getmsgint(buf, sizeof(int32));
+
+    PG_RETURN_POINTER(res);
+}
+
+Datum
+lsid_send(PG_FUNCTION_ARGS)
+{
+    Lsid    *lsid = (Lsid *) PG_GETARG_POINTER(0);
+    StringInfoData buf;
+
+    pq_begintypsend(&buf);
+    pq_sendint(&buf, lsid->backend_start_time, 4);
+    pq_sendint(&buf, lsid->backend_pid, 4);
+
+    PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
+}
+
+/*
+ * Functions used to extract the backend start time
+ * and backend pid from lsid type.
+ */ 
+Datum
+get_session_start_time(PG_FUNCTION_ARGS)
+{
+    Lsid    *lsid = (Lsid *) PG_GETARG_POINTER(0);
+
+    PG_RETURN_INT32(lsid->backend_start_time);
+}
+
+Datum
+get_session_pid(PG_FUNCTION_ARGS)
+{
+    Lsid    *lsid = (Lsid *) PG_GETARG_POINTER(0);
+
+    PG_RETURN_INT32(lsid->backend_pid);
+}
+
+/*
+ * Given two integers representing the number of seconds since epoch of
+ * the backend start time and the pid number of the backenreturns a lsid
+ */
+Datum
+generate_lsid(PG_FUNCTION_ARGS)
+{
+	Lsid       *res;
+	int        st  = Int32GetDatum((int32) PG_GETARG_INT32(0));
+	int        pid = Int32GetDatum((int32) PG_GETARG_INT32(1));
+
+	Assert(st != NULL);
+	Assert(pid != NULL);
+
+	if (st <= 0 || pid <= 0)
+		ereport(ERROR,
+			( errmsg("one of the argument is null, this is not supported")));
+
+	res = (Lsid *) palloc(sizeof(Lsid));
+	res->backend_start_time = st;
+	res->backend_pid = pid;
+
+	PG_RETURN_POINTER(res);
+}
+
+
+/*
+ * Operator class for defining B-tree index
+ */
+static int
+lsid_cmp_internal(Lsid * a, Lsid * b)
+{
+        if (a->backend_start_time < b->backend_start_time)
+                return -1;
+        if (a->backend_start_time > b->backend_start_time)
+                return 1;
+	/*
+	 * a->backend_start_time = b->backend_start_time
+	 * so continue the comparison on pid number
+	 */
+	if (a->backend_pid < b->backend_pid)
+                return -1;
+	if (a->backend_pid > b->backend_pid)
+                return 1;
+
+        return 0;
+}
+
+PG_FUNCTION_INFO_V1(lsid_lt);
+
+Datum
+lsid_lt(PG_FUNCTION_ARGS)
+{
+        Lsid    *a = (Lsid *) PG_GETARG_POINTER(0);
+        Lsid    *b = (Lsid *) PG_GETARG_POINTER(1);
+
+        PG_RETURN_BOOL(lsid_cmp_internal(a, b) < 0);
+}
+
+PG_FUNCTION_INFO_V1(lsid_le);
+
+Datum
+lsid_le(PG_FUNCTION_ARGS)
+{
+        Lsid    *a = (Lsid *) PG_GETARG_POINTER(0);
+        Lsid    *b = (Lsid *) PG_GETARG_POINTER(1);
+
+        PG_RETURN_BOOL(lsid_cmp_internal(a, b) <= 0);
+}
+
+PG_FUNCTION_INFO_V1(lsid_eq);
+
+Datum
+lsid_eq(PG_FUNCTION_ARGS)
+{
+        Lsid    *a = (Lsid *) PG_GETARG_POINTER(0);
+        Lsid    *b = (Lsid *) PG_GETARG_POINTER(1);
+
+        PG_RETURN_BOOL(lsid_cmp_internal(a, b) == 0);
+}
+
+PG_FUNCTION_INFO_V1(lsid_ge);
+
+Datum
+lsid_ge(PG_FUNCTION_ARGS)
+{
+        Lsid    *a = (Lsid *) PG_GETARG_POINTER(0);
+        Lsid    *b = (Lsid *) PG_GETARG_POINTER(1);
+
+        PG_RETURN_BOOL(lsid_cmp_internal(a, b) >= 0);
+}
+
+PG_FUNCTION_INFO_V1(lsid_gt);
+
+Datum
+lsid_gt(PG_FUNCTION_ARGS)
+{
+        Lsid    *a = (Lsid *) PG_GETARG_POINTER(0);
+        Lsid    *b = (Lsid *) PG_GETARG_POINTER(1);
+
+        PG_RETURN_BOOL(lsid_cmp_internal(a, b) > 0);
+}
+
+PG_FUNCTION_INFO_V1(lsid_cmp);
+
+Datum
+lsid_cmp(PG_FUNCTION_ARGS)
+{
+        Lsid    *a = (Lsid *) PG_GETARG_POINTER(0);
+        Lsid    *b = (Lsid *) PG_GETARG_POINTER(1);
+
+        PG_RETURN_INT32(lsid_cmp_internal(a, b));
 }
 

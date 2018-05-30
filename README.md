@@ -3,7 +3,7 @@ PG Global Temporary Tables
 
 pgtt is a PostgreSQL extension to create and manage Oracle-style
 Global Temporary Tables. It is based on unlogged tables, Row Security
-Level and views. A background worker is responsible to periodicaly
+Level and views. A background worker is responsible to periodically
 remove obsolete rows.
 
 PostgreSQL native temporary tables are automatically dropped at the
@@ -11,7 +11,7 @@ end of a session, or optionally at the end of the current transaction.
 Oracle Global Temporary Tables (GTT) are permanent, they are created
 as regular tables visible to all users but their content is relative
 to the current session or transaction. Even if the table is persistent
-a session or transction can not see rows written by an other session.
+a session or transaction can not see rows written by an other session.
 
 An other difference is that Oracle Global Temporary Table can be
 created in any schema while it is not possible with PostgreSQL where
@@ -52,7 +52,7 @@ Configuration
 The background worker used to remove obsolete rows from global
 temporary tables must be loaded on database start by adding the
 library to shared_preload_libraries in postgresql.conf. You also
-need to load the pgtt library defineing C function used by the
+need to load the pgtt library defining C function used by the
 extension.
 
 * shared_preload_libraries='pgtt_bgw,pgtt'
@@ -122,27 +122,35 @@ Behind the functions
 How the extension really works? When you call the pgtt_create_table()
 function the pgtt extension act as follow:
 
-  1) create an unlogged table of the same name but prefixed with 'pgtt_'
-     with the "hidden" column for a GTT (pgtt_sessid).
+  1) Create an unlogged table of the same name but prefixed with 'pgtt_'
+     with a "hidden" column 'pgtt_sessid' of custom type lsid.
      The table is stored in extension schema pgtt_schema and the users
      must not access to this table directly. They have to use the view
      instead. The pgtt_sessid column has default to get_session_id(),
      this function is part of the pgtt_extension and build a session
-     unique id from the backend start time (epoch) and the pid.
-  2) grant SELECT,INSERT,UPDATE,DELETE on the table to PUBLIC.
-  3) activate RLS on the table and create two RLS policies to hide rows
+     local unique id from the backend start time (epoch) and the pid.
+     The custom type use is a C structure of two integers:
+
+	typedef struct Lsid {
+	    int      backend_start_time;
+	    int      backend_pid;
+	} Lsid;
+
+  2) Create a btree index on column pgtt_sessid of special type lsid.
+  3) Grant SELECT,INSERT,UPDATE,DELETE on the table to PUBLIC.
+  4) Activate RLS on the table and create two RLS policies to hide rows
      to other sessions or transactions when required.
-  4) force RLS to be active for the owner of the table.
-  5) create an updatable view using the original table name with a
+  5) Force RLS to be active for the owner of the table.
+  6) Create an updatable view using the original table name with a
      a WHERE clause to hide the "hidden" column of the table.
-  6) set owner of the view to current_user which might be a superuser,
+  7) Set owner of the view to current_user which might be a superuser,
      grants to other users are the responsability of the administrator.
-  7) insert the relation between the gtt and the view in the catalog
+  8) Insert the relation between the GTT and the view in the catalog
      table pgtt_global_temp.
 
 The pgtt_drop_table() function is responsible to remove all references
 to a GTT table and its corresponding view. When it is called it just
-execute a "DROP TABLE IF EXISTS pgtt_schema.pgtt_tablename CASCADE;".
+execute a "DROP TABLE IF EXISTS pgtt_schema.pgtt_tbname CASCADE;".
 Using CASCADE will also drop the associated view.
 
 Behind the background worker
@@ -177,12 +185,14 @@ The pgtt_schema.pgtt_maintenance() has the following actions:
   3) If the relation exists it truncate the GTT table when the worker
      is run at postmaster startup then exit.
   4) For other iteration it delete rows from the Global Temporary table
-     where pgtt_sessid or xmim doesn't appears in pg_stat_activity
+     where the pid stored in pgtt_sessid doesn't appears in view
+     pg_stat_activity or if the xmim is not fount in the same view,
      looking at pid and backend_xid columns. Xmin is verified only if
      the Global Temporary table is declared to delete rows on commit,
      when preserved is false.
   5) When an analyze is asked the function execute an ANALYZE on
-     the table after having removed obsolete tuples.
+     the table after having removed obsolete tuples. THe default is to
+     let autoanalyze do is work.
 
 The function returns the total number of rows deleted. It must not be
 run manually but only run by pgtt_bgw the background worker.

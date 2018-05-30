@@ -1,6 +1,82 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION pgtt" to load this file. \quit
 
+-- Create the type used to store the local session id
+CREATE TYPE uri;
+CREATE FUNCTION lsid_in(cstring) RETURNS lsid AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION lsid_out(lsid) RETURNS cstring AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION lsid_recv(internal) RETURNS lsid AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION lsid_send(lsid) RETURNS bytea AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE lsid (
+        INTERNALLENGTH = 8, -- Composed of 2 int4
+        INPUT = lsid_in,
+        OUTPUT = lsid_out,
+        RECEIVE = lsid_recv,
+        SEND = lsid_send,
+	ALIGNMENT = int4
+);
+
+----
+-- Interfacing new lsid type with indexes:
+----
+
+-- Define the required operators
+CREATE FUNCTION lsid_lt(lsid, lsid) RETURNS bool AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION lsid_le(lsid, lsid) RETURNS bool AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION lsid_eq(lsid, lsid) RETURNS bool AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION lsid_ge(lsid, lsid) RETURNS bool AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION lsid_gt(lsid, lsid) RETURNS bool AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OPERATOR < (
+	leftarg = lsid, rightarg = lsid, procedure = lsid_lt,
+	commutator = > , negator = >= ,
+	restrict = scalarltsel, join = scalarltjoinsel
+);
+CREATE OPERATOR <= (
+	leftarg = lsid, rightarg = lsid, procedure = lsid_le,
+	commutator = >= , negator = > ,
+	restrict = scalarltsel, join = scalarltjoinsel
+);
+CREATE OPERATOR = (
+	leftarg = lsid, rightarg = lsid, procedure = lsid_eq,
+	commutator = = , -- leave out negator since we didn't create <> operator
+	restrict = eqsel, join = eqjoinsel
+);
+CREATE OPERATOR >= (
+	leftarg = lsid, rightarg = lsid, procedure = lsid_ge,
+	commutator = <= , negator = < ,
+	restrict = scalargtsel, join = scalargtjoinsel
+);
+
+CREATE OPERATOR > (
+	leftarg = lsid, rightarg = lsid, procedure = lsid_gt,
+	commutator = < , negator = <= ,
+	restrict = scalargtsel, join = scalargtjoinsel
+);
+
+-- create the support function too
+CREATE FUNCTION lsid_cmp(lsid, lsid) RETURNS int4 AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+
+-- now we can make the operator class
+CREATE OPERATOR CLASS lsid_ops
+    DEFAULT FOR TYPE lsid USING btree AS
+        OPERATOR        1       < ,
+        OPERATOR        2       <= ,
+        OPERATOR        3       = ,
+        OPERATOR        4       >= ,
+        OPERATOR        5       > ,
+        FUNCTION        1       lsid_cmp(lsid, lsid);
+
+CREATE CAST (lsid AS int[]) WITH INOUT AS ASSIGNMENT;
+CREATE CAST (int[] AS lsid) WITH INOUT AS ASSIGNMENT;
+
+
+CREATE FUNCTION get_session_id() RETURNS lsid AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION generate_lsid(int, int) RETURNS lsid AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION get_session_start_time(lsid) RETURNS int AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION get_session_pid(lsid) RETURNS int AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
+
 ----
 -- Create schema dedicated to the global temporary table
 ----
@@ -9,8 +85,6 @@ REVOKE ALL ON SCHEMA pgtt_schema FROM PUBLIC;
 GRANT USAGE ON SCHEMA pgtt_schema TO PUBLIC;
 
 SET LOCAL search_path TO pgtt_schema,pg_catalog;
-
-CREATE FUNCTION get_session_id() RETURNS text AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE;
 
 ----
 -- Table for meta information about Global Temporary Table.
@@ -74,7 +148,7 @@ BEGIN
 		EXECUTE format('CREATE UNLOGGED TABLE pgtt_schema.pgtt_%s AS %s', tb_name, code);
 	END IF;
 	-- Append pgtt_sessid "internal" column to the GTT table
-	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s ADD COLUMN pgtt_sessid text DEFAULT pgtt_schema.get_session_id()', tb_name);
+	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s ADD COLUMN pgtt_sessid lsid DEFAULT get_session_id()', tb_name);
 
 	-- Create an index on pgtt_sessid column, this will slow donw insert
 	-- but this will help lot for select with the view
@@ -91,13 +165,13 @@ BEGIN
 		-- Create the policy that must be applied on the table
 		-- to show only rows where pgtt_sessid is the same as
 		-- current pid.
-		EXECUTE format('CREATE POLICY pgtt_rls_session ON pgtt_schema.pgtt_%s USING (pgtt_sessid = pgtt_schema.get_session_id()) WITH CHECK (true)', tb_name);
+		EXECUTE format('CREATE POLICY pgtt_rls_session ON pgtt_schema.pgtt_%s USING (pgtt_sessid = get_session_id()) WITH CHECK (true)', tb_name);
 	ELSE
 		-- Create the policy that must be applied on the table
 		-- to show only rows where pgtt_sessid is the same as
 		-- current pid and rows that have been created in the
 		-- current transaction.
-		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = pgtt_schema.get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)', tb_name);
+		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)', tb_name);
 	END IF;
 	-- Force policy to be active for the owner of the table
 	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s FORCE ROW LEVEL SECURITY', tb_name);
@@ -111,9 +185,9 @@ BEGIN
 	-- only deal with this name, not the internal name of
 	-- the corresponding table prefixed with pgtt_.
 	IF preserved THEN
-		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=pgtt_schema.get_session_id()', tb_name, column_list, tb_name);
+		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id()', tb_name, column_list, tb_name);
 	ELSE
-		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=pgtt_schema.get_session_id() AND xmin::text = txid_current()::text', tb_name, column_list, tb_name);
+		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id() AND xmin::text = txid_current()::text', tb_name, column_list, tb_name);
 	END IF;
 
 	-- Set owner of the view to current user, not the function definer (superuser)
@@ -205,7 +279,7 @@ BEGIN
 		-- With a GTT that preserves tuples in an entire session
 		IF (class_info.preserved) THEN
 			-- delete rows from the GTT table that do not belong to an active session
-			EXECUTE 'DELETE FROM ' || class_info.relid::regclass || ' WHERE ctid = ANY(ARRAY(SELECT ctid FROM ' || class_info.relid::regclass || ' WHERE NOT (pgtt_sessid = ANY(ARRAY(SELECT to_hex(extract(epoch from backend_start)::bigint) || ''.'' || to_hex(pid::integer) FROM pg_stat_activity))) LIMIT ' || chunk_size || '))';
+			EXECUTE 'DELETE FROM ' || class_info.relid::regclass || ' WHERE ctid = ANY(ARRAY(SELECT ctid FROM ' || class_info.relid::regclass || ' WHERE NOT (pgtt_sessid = ANY(ARRAY(SELECT generate_lsid(extract(epoch from backend_start)::int, pid) FROM pg_stat_activity))) LIMIT ' || chunk_size || '))';
 
 			GET DIAGNOSTICS nrows = ROW_COUNT;
 			total_nrows := total_nrows + nrows;
