@@ -131,8 +131,12 @@ _PG_init(void)
 	/*
 	 * Install hooks.
 	 */
+
+	/* Disable hook for the moment */
+	/*
 	prev_ProcessUtility = ProcessUtility_hook;
 	ProcessUtility_hook = gtt_ProcessUtility;
+	*/
 }
 
 /*
@@ -142,7 +146,9 @@ void
 _PG_fini(void)
 {
 	/* Uninstall hooks. */
+	/*
 	ProcessUtility_hook = prev_ProcessUtility;
+	*/
 }
 
 static void
