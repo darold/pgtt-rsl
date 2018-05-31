@@ -2,7 +2,7 @@
 \echo Use "CREATE EXTENSION pgtt" to load this file. \quit
 
 -- Create the type used to store the local session id
-CREATE TYPE uri;
+CREATE TYPE lsid;
 CREATE FUNCTION lsid_in(cstring) RETURNS lsid AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
 CREATE FUNCTION lsid_out(lsid) RETURNS cstring AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
 CREATE FUNCTION lsid_recv(internal) RETURNS lsid AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT;
