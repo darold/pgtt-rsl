@@ -150,8 +150,8 @@ BEGIN
 	-- Append pgtt_sessid "internal" column to the GTT table
 	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s ADD COLUMN pgtt_sessid lsid DEFAULT get_session_id()', tb_name);
 
-	-- Create an index on pgtt_sessid column, this will slow donw insert
-	-- but this will help lot for select with the view
+	-- Create an index on pgtt_sessid column, this will slow
+	-- down insert but this will help for select from the view
 	EXECUTE format('CREATE INDEX ON pgtt_schema.pgtt_%s (pgtt_sessid)', tb_name);
 
 	-- Allow all on the global temporary table except
@@ -176,8 +176,8 @@ BEGIN
 	-- Force policy to be active for the owner of the table
 	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s FORCE ROW LEVEL SECURITY', tb_name);
 
-	-- Collect all visible column of the table attnum > 2 as columns
-	-- pgtt_sessid and pgtt_txid must not be reported by the view.
+	-- Collect all visible column of the table attnum >= 1 as
+	-- column pgtt_sessid must not be reported by the view.
 	SELECT string_agg(attname, ',' ORDER BY attnum) INTO column_list FROM pg_attribute WHERE attrelid=('pgtt_schema.pgtt_'||tb_name)::regclass AND attname != 'pgtt_sessid' AND attnum >= 1 AND NOT attisdropped;
 
 	-- Create a view to hide the GTT's columns and named
