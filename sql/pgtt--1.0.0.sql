@@ -180,10 +180,10 @@ BEGIN
 	-- column pgtt_sessid must not be reported by the view.
 	SELECT string_agg(attname, ',' ORDER BY attnum) INTO column_list FROM pg_attribute WHERE attrelid=('pgtt_schema.pgtt_'||tb_name)::regclass AND attname != 'pgtt_sessid' AND attnum >= 1 AND NOT attisdropped;
 
-	-- Create a view to hide the GTT's columns and named
-	-- as the table name given by the user so that he will
-	-- only deal with this name, not the internal name of
-	-- the corresponding table prefixed with pgtt_.
+	-- Create a view named as the table name given by the user
+	-- so that he will only deal with this name, and never the
+	-- internal name of the corresponding table prefixed with
+	-- pgtt_. The view is also used to hide the pgtt_sessid column.
 	IF preserved THEN
 		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id()', tb_name, column_list, tb_name);
 	ELSE
@@ -223,9 +223,12 @@ CREATE FUNCTION pgtt_schema.pgtt_drop_table (tb_name name)
 RETURNS boolean
 AS $$
 BEGIN
-	-- Compute the query to remove the global temporary table
-	-- and related indexes with CASCADE associated view will
-	-- be removed.
+        -- Unregister the table/view relation from pgtt_schema.pgtt_global_temp table.
+        EXECUTE format('DELETE FROM pgtt_schema.pgtt_global_temp WHERE relid=%s',
+                (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = 'pgtt_'||tb_name AND n.nspname = 'pgtt_schema');
+
+	-- Compute the query to remove the global temporary table and
+	-- related indexes, with CASCADE associated view will be removed.
 	EXECUTE format('DROP TABLE IF EXISTS pgtt_schema.pgtt_%s CASCADE', tb_name);
 
 	RETURN true;
