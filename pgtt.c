@@ -36,6 +36,12 @@
 #include "storage/proc.h"
 #include "utils/builtins.h"
 
+#if (PG_VERSION_NUM >= 120000)
+#include "access/genam.h"
+#include "access/heapam.h"
+#include "catalog/pg_class.h"
+#endif
+
 #if PG_VERSION_NUM >= 100000
 #include "utils/regproc.h"
 #endif
@@ -93,14 +99,15 @@ typedef struct Lsid {
 
 /* Saved hook values in case of unload */
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
+/* Hook to intercept CREATE GLOBAL TEMPORARY TABLE query */
+static void gtt_ProcessUtility(GTT_PROCESSUTILITY_PROTO);
+static bool gtt_check_command(GTT_PROCESSUTILITY_PROTO);
 
 /* Function declarations */
 
 void	_PG_init(void);
 void	_PG_fini(void);
 
-static void gtt_ProcessUtility(GTT_PROCESSUTILITY_PROTO);
-static bool gtt_check_command(GTT_PROCESSUTILITY_PROTO);
 int strpos(char *hay, char *needle, int offset);
 static void gtt_override_create_table(GTT_PROCESSUTILITY_PROTO);
 static void gtt_drop_table_statement(Oid relid, const char *relname);
@@ -377,8 +384,17 @@ elog(DEBUG1, "GTT DEBUG: mainTableOid = %d - tablename: %s", mainTableOid, tbnam
 int
 strpos(char *hay, char *needle, int offset)
 {
-	char haystack[strlen(hay)];
+	char *haystack;
 	char *p;
+
+	haystack = (char *) malloc(strlen(hay));
+	if (haystack == NULL)
+	{
+		fprintf(stderr, _("out of memory\n"));
+		exit(EXIT_FAILURE);
+		return -1;
+	}
+	memset(haystack, 0, strlen(hay));
 
 	strncpy(haystack, hay+offset, strlen(hay)-offset);
 	p = strstr(haystack, needle);
@@ -693,7 +709,11 @@ search_relation(char *relname)
 	scan = systable_beginscan(pg_class_rel, ClassNameNspIndexId, true, NULL, lengthof(key), key);
 	if (HeapTupleIsValid(tuple = systable_getnext(scan)))
 	{
+#if (PG_VERSION_NUM >= 120000)
+		foundOid = ((Form_pg_class) GETSTRUCT(tuple))->oid;
+#else
 		foundOid = HeapTupleGetOid(tuple);
+#endif
 	}
 	/* Cleanup. */
 	systable_endscan(scan);

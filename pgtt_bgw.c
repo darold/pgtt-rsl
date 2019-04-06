@@ -38,6 +38,11 @@
 #include "access/htup_details.h"
 #include "utils/memutils.h"
 
+#if (PG_VERSION_NUM >= 120000)
+#include "access/tableam.h"
+#include "access/heapam.h"
+#include "access/table.h"
+#endif
 
 #if (PG_VERSION_NUM >= 100000)
 #include "utils/varlena.h"
@@ -198,7 +203,11 @@ pgtt_bgw_main(Datum main_arg)
 	 */
 	ereport(DEBUG1,
 			(errmsg("Initialize connection to database %s", PGTT_START_DBNAME)));
+#if (PG_VERSION_NUM >= 110000)
+	BackgroundWorkerInitializeConnection(PGTT_START_DBNAME, NULL, 0);
+#else
 	BackgroundWorkerInitializeConnection(PGTT_START_DBNAME, NULL);
+#endif
 
 	initStringInfo(&buf);
 
@@ -467,7 +476,11 @@ get_database_list(void)
 {
 	List	   *dblist = NIL;
 	Relation	rel;
+#if (PG_VERSION_NUM >= 120000)
+	TableScanDesc scan;
+#else
 	HeapScanDesc scan;
+#endif
 	HeapTuple	tup;
 	MemoryContext resultcxt;
 
@@ -485,7 +498,11 @@ get_database_list(void)
 	(void) GetTransactionSnapshot();
 
 	rel = heap_open(DatabaseRelationId, AccessShareLock);
+#if (PG_VERSION_NUM >= 120000)
+	scan = table_beginscan_catalog(rel, 0, NULL);
+#else
 	scan = heap_beginscan_catalog(rel, 0, NULL);
+#endif
 
 	while (HeapTupleIsValid(tup = heap_getnext(scan, ForwardScanDirection)))
 	{
