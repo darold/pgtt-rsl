@@ -225,7 +225,7 @@ AS $$
 BEGIN
         -- Unregister the table/view relation from pgtt_schema.pgtt_global_temp table.
         EXECUTE format('DELETE FROM pgtt_schema.pgtt_global_temp WHERE relid=%s',
-                (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = 'pgtt_'||tb_name AND n.nspname = 'pgtt_schema');
+                (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = 'pgtt_'||tb_name AND n.nspname = 'pgtt_schema'));
 
 	-- Compute the query to remove the global temporary table and
 	-- related indexes, with CASCADE associated view will be removed.
