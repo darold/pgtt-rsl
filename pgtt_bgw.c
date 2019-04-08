@@ -497,13 +497,13 @@ get_database_list(void)
 	StartTransactionCommand();
 	(void) GetTransactionSnapshot();
 
-	rel = heap_open(DatabaseRelationId, AccessShareLock);
 #if (PG_VERSION_NUM >= 120000)
+	rel = table_open(DatabaseRelationId, AccessShareLock);
 	scan = table_beginscan_catalog(rel, 0, NULL);
 #else
+	rel = heap_open(DatabaseRelationId, AccessShareLock);
 	scan = heap_beginscan_catalog(rel, 0, NULL);
 #endif
-
 	while (HeapTupleIsValid(tup = heap_getnext(scan, ForwardScanDirection)))
 	{
 		Form_pg_database pgdatabase = (Form_pg_database) GETSTRUCT(tup);
@@ -526,8 +526,13 @@ get_database_list(void)
 		MemoryContextSwitchTo(oldcxt);
 	}
 
+#if (PG_VERSION_NUM >= 120000)
+	table_endscan(scan);
+	table_close(rel, AccessShareLock);
+#else
 	heap_endscan(scan);
 	heap_close(rel, AccessShareLock);
+#endif
 
 	CommitTransactionCommand();
 

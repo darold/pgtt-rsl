@@ -704,7 +704,11 @@ search_relation(char *relname)
 	ScanKeyInit(&key[0], Anum_pg_class_relname, BTEqualStrategyNumber, F_NAMEEQ, CStringGetDatum(relname));
 	ScanKeyInit(&key[1], Anum_pg_class_relnamespace, BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(schemaOid));
 	/* Open catalog's relations */
+#if (PG_VERSION_NUM >= 120000)
+	pg_class_rel = table_open(RelationRelationId, RowExclusiveLock);
+#else
 	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
+#endif
 	/* Start search of relation */
 	scan = systable_beginscan(pg_class_rel, ClassNameNspIndexId, true, NULL, lengthof(key), key);
 	if (HeapTupleIsValid(tuple = systable_getnext(scan)))
@@ -717,7 +721,11 @@ search_relation(char *relname)
 	}
 	/* Cleanup. */
 	systable_endscan(scan);
+#if (PG_VERSION_NUM >= 120000)
+	table_close(pg_class_rel, RowExclusiveLock);
+#else
 	heap_close(pg_class_rel, RowExclusiveLock);
+#endif
 
 	if (foundOid > 0)
 		elog(DEBUG1, "GTT DEBUG: Found oid for relation %s from pg_class, oid %d", relname, foundOid);
@@ -742,7 +750,11 @@ gtt_unregister_global_temporary_table(Oid relid, const char *relname)
 
 	/* Set and open the GTT relation */
 	rv = makeRangeVar(PGTT_NSPNAME, CATALOG_GLOBAL_TEMP_REL, -1);
+#if (PG_VERSION_NUM >= 120000)
+	rel = table_openrv(rv, RowExclusiveLock);
+#else
 	rel = heap_openrv(rv, RowExclusiveLock);
+#endif
 	/* Define scanning */
 	ScanKeyInit(&key[0], Anum_pgtt_relid, BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(relid));
 
@@ -753,7 +765,11 @@ gtt_unregister_global_temporary_table(Oid relid, const char *relname)
 				simple_heap_delete(rel, &tuple->t_self);
 	/* Cleanup. */
 	systable_endscan(scan);
+#if (PG_VERSION_NUM >= 120000)
+	table_close(rel, RowExclusiveLock);
+#else
 	heap_close(rel, RowExclusiveLock);
+#endif
 
 }
 

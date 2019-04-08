@@ -4,7 +4,7 @@ EXTVERSION = $(shell grep default_version $(EXTENSION).control | \
 
 PGFILEDESC = "pgtt - Global Temporary Tables for PostgreSQL"
 
-PG_CONFIG = /usr/local/pghook/bin/pg_config
+PG_CONFIG = pg_config
 
 # Test that we can install a bgworker, PG >= 9.4
 PG94 = $(shell $(PG_CONFIG) --version | egrep " 8\.| 9\.[0-3]" > /dev/null && echo no || echo yes)
