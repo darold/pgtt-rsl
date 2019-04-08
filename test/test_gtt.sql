@@ -1,8 +1,8 @@
 ----
 -- Regression test to Global Temporary Table implementation
 --
--- LANC=C psql -f test/test_gtt-1.1.0.sql > result.txt 2>&1
--- diff result.txt test/expected/test_gtt-1.1.0.txt
+-- LANC=C psql -f test/test_gtt-1.2.0.sql > result.txt 2>&1
+-- diff result.txt test/expected/test_gtt-1.2.0.txt
 ----
 
 CREATE ROLE test_gtt1 LOGIN PASSWORD 'test_gtt1';
