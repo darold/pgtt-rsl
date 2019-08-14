@@ -46,6 +46,16 @@ Depending on your installation, you may need to install some devel
 package and especially the libpq devel package. Once pg_config is in
 your path, do "make", and then "make install".
 
+Installation (Windows 64bit)
+============================
+
+Installing on and building on Windows 8.x/10 and PostgreSQL 64-bit is possible and was 
+tested with PostgreSQL 11. A working Visual Studio is needed with Windows SDK configured. 
+
+Building the solution is quite straightforward as long as the SDK is working. More details
+in the win64 directory README.
+
+
 Configuration
 =============
 
