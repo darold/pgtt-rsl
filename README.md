@@ -1,6 +1,9 @@
 PG Global Temporary Tables
 ==========================
 
+WARNING: this extension is no more maintained, a more efficient implementation
+is available [pgtt-2.x](https://github.com/darold/pgtt).
+
 pgtt is a PostgreSQL extension to create and manage Oracle-style
 Global Temporary Tables. It is based on unlogged tables, Row Security
 Level and views. A background worker is responsible to periodically
