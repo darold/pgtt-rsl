@@ -11,6 +11,18 @@
  *
  *-------------------------------------------------------------------------
  */
+
+#if (_WIN32)
+#define  _win_dll PGDLLEXPORT 
+#else
+#define  _win_dll
+#endif
+
+#if (_MSC_VER >= 1915)
+#define no_init_all deprecated
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+
 #include "postgres.h"
 #include <unistd.h>
 #include "funcapi.h"
@@ -64,10 +76,37 @@ PG_FUNCTION_INFO_V1(get_session_start_time);
 PGDLLEXPORT Datum   get_session_pid(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(get_session_pid);
 
+PGDLLEXPORT Datum   lsid_in(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(lsid_in);
+
+PGDLLEXPORT Datum   lsid_out(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(lsid_out);
+
+PGDLLEXPORT Datum   lsid_recv(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(lsid_recv);
+
+PGDLLEXPORT Datum   lsid_send(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(lsid_send);
+
+
+PGDLLEXPORT Datum   lsid_lt(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(lsid_lt);
+
+PGDLLEXPORT Datum   lsid_le(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(lsid_le);
+
+PGDLLEXPORT Datum   lsid_gt(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(lsid_gt);
+
+PGDLLEXPORT Datum   lsid_ge(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(lsid_ge);
+
+PGDLLEXPORT Datum   lsid_eq(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(lsid_eq);
+
+PGDLLEXPORT Datum   lsid_cmp(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(lsid_cmp);
+
 
 typedef struct Lsid {
     int      backend_start_time;
@@ -916,8 +955,6 @@ lsid_cmp_internal(Lsid * a, Lsid * b)
         return 0;
 }
 
-PG_FUNCTION_INFO_V1(lsid_lt);
-
 Datum
 lsid_lt(PG_FUNCTION_ARGS)
 {
@@ -926,8 +963,6 @@ lsid_lt(PG_FUNCTION_ARGS)
 
         PG_RETURN_BOOL(lsid_cmp_internal(a, b) < 0);
 }
-
-PG_FUNCTION_INFO_V1(lsid_le);
 
 Datum
 lsid_le(PG_FUNCTION_ARGS)
@@ -938,8 +973,6 @@ lsid_le(PG_FUNCTION_ARGS)
         PG_RETURN_BOOL(lsid_cmp_internal(a, b) <= 0);
 }
 
-PG_FUNCTION_INFO_V1(lsid_eq);
-
 Datum
 lsid_eq(PG_FUNCTION_ARGS)
 {
@@ -949,7 +982,6 @@ lsid_eq(PG_FUNCTION_ARGS)
         PG_RETURN_BOOL(lsid_cmp_internal(a, b) == 0);
 }
 
-PG_FUNCTION_INFO_V1(lsid_ge);
 
 Datum
 lsid_ge(PG_FUNCTION_ARGS)
@@ -960,8 +992,6 @@ lsid_ge(PG_FUNCTION_ARGS)
         PG_RETURN_BOOL(lsid_cmp_internal(a, b) >= 0);
 }
 
-PG_FUNCTION_INFO_V1(lsid_gt);
-
 Datum
 lsid_gt(PG_FUNCTION_ARGS)
 {
@@ -970,8 +1000,6 @@ lsid_gt(PG_FUNCTION_ARGS)
 
         PG_RETURN_BOOL(lsid_cmp_internal(a, b) > 0);
 }
-
-PG_FUNCTION_INFO_V1(lsid_cmp);
 
 Datum
 lsid_cmp(PG_FUNCTION_ARGS)
