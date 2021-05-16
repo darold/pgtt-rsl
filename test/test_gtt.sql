@@ -4,7 +4,9 @@
 -- LANC=C psql -f test/test_gtt-1.2.0.sql > result.txt 2>&1
 -- diff result.txt test/expected/test_gtt-1.2.0.txt
 ----
-
+DROP DATABASE IF EXISTS gtt_testdb;
+DROP ROLE IF EXISTS test_gtt1;
+DROP ROLE IF EXISTS test_gtt2;
 CREATE ROLE test_gtt1 LOGIN PASSWORD 'test_gtt1';
 CREATE ROLE test_gtt2 LOGIN PASSWORD 'test_gtt2';
 

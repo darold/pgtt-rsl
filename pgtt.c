@@ -78,24 +78,31 @@ typedef struct Lsid {
 #define PGTT_NSPNAME "pgtt_schema"
 
 /* Define ProcessUtility hook proto/parameters following the PostgreSQL version */
+#if PG_VERSION_NUM >= 130000
+#define GTT_PROCESSUTILITY_PROTO PlannedStmt *pstmt, const char *queryString, \
+                                        ProcessUtilityContext context, ParamListInfo params, \
+                                        QueryEnvironment *queryEnv, DestReceiver *dest, \
+                                        QueryCompletion *qc
+#define GTT_PROCESSUTILITY_ARGS pstmt, queryString, context, params, queryEnv, dest, qc
+#else
 #if PG_VERSION_NUM >= 100000
 #define GTT_PROCESSUTILITY_PROTO PlannedStmt *pstmt, const char *queryString, \
-					ProcessUtilityContext context, ParamListInfo params, \
-					QueryEnvironment *queryEnv, DestReceiver *dest, \
-					char *completionTag
+                                        ProcessUtilityContext context, ParamListInfo params, \
+                                        QueryEnvironment *queryEnv, DestReceiver *dest, \
+                                        char *completionTag
 #define GTT_PROCESSUTILITY_ARGS pstmt, queryString, context, params, queryEnv, dest, completionTag
 #elif PG_VERSION_NUM >= 90300
 #define GTT_PROCESSUTILITY_PROTO Node *parsetree, const char *queryString, \
                                         ProcessUtilityContext context, ParamListInfo params, \
-					DestReceiver *dest, char *completionTag
+                                        DestReceiver *dest, char *completionTag
 #define GTT_PROCESSUTILITY_ARGS parsetree, queryString, context, params, dest, completionTag
 #else
 #define GTT_PROCESSUTILITY_PROTO Node *parsetree, const char *queryString, \
                                         ParamListInfo params, bool isTopLevel, \
-					DestReceiver *dest, char *completionTag
+                                        DestReceiver *dest, char *completionTag
 #define GTT_PROCESSUTILITY_ARGS parsetree, queryString, params, isTopLevel, dest, completionTag
 #endif
-
+#endif
 
 /* Saved hook values in case of unload */
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
