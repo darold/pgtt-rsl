@@ -47,6 +47,10 @@
 #include "utils/regproc.h"
 #endif
 
+#if PG_VERSION_NUM < 90500
+#error Minimum version of PostgreSQL required is 9.5
+#endif
+
 #define CATALOG_GLOBAL_TEMP_REL	"pgtt_global_temp"
 #define Anum_pgtt_relid   1
 #define Anum_pgtt_viewid  2
