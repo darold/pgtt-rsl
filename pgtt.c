@@ -17,6 +17,7 @@
 #include "tcop/utility.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
+#include "access/parallel.h"
 #include "catalog/catalog.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_class.h"
@@ -136,6 +137,10 @@ static void gtt_unregister_global_temporary_table(Oid relid, const char *relname
 void
 _PG_init(void)
 {
+	/* do not execute anything in parallel processes */
+	if (ParallelWorkerNumber >= 0)
+		return;
+
 	/*
 	 * In order to create our shared memory area, we have to be loaded via
 	 * shared_preload_libraries.  If not, fall out without hooking into any of
@@ -177,13 +182,14 @@ _PG_fini(void)
 static void
 gtt_ProcessUtility(GTT_PROCESSUTILITY_PROTO)
 {
-	/*
-	 * Check if we have a CREATE GLOBAL TEMPORARY TABLE
-	 * in this case do more work than the simple table
-	 * creation see SQL file in sql/ subdirectory
-	 */
-	if (gtt_check_command(GTT_PROCESSUTILITY_ARGS)) {
-		return;
+	/* only in the top process */
+	if (ParallelWorkerNumber == -1)
+	{
+		/*
+		 * Check if we have a CREATE GLOBAL TEMPORARY TABLE, in
+		 * this case do more work than the simple table creation
+		 */
+		(void) gtt_check_command(GTT_PROCESSUTILITY_ARGS);
 	}
 
 	elog(DEBUG1, "GTT DEBUG: restore ProcessUtility");
@@ -201,7 +207,6 @@ gtt_ProcessUtility(GTT_PROCESSUTILITY_PROTO)
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
 }
 
 /*
