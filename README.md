@@ -1,13 +1,14 @@
 PG Global Temporary Tables
 ==========================
 
-**WARNING: this extension is no more maintained, a more efficient implementation
-is available [pgtt-2.x](https://github.com/darold/pgtt).**
-
-pgtt is a PostgreSQL extension to create and manage Oracle-style
+pgtt v1.x is a PostgreSQL extension to create and manage Oracle-style
 Global Temporary Tables. It is based on unlogged tables, Row Security
 Level and views. A background worker is responsible to periodically
-remove obsolete rows.
+remove obsolete rows. This implementation is designed to avoid catalog
+bloating when creating a lot of temporary tables. If you are looking
+for Oracle style Global Temporary Tables but with high performances
+you should look at [pgtt-2.x](https://github.com/darold/pgtt) which is
+based on temporary tables but will not address the bloat problem.
 
 PostgreSQL native temporary tables are automatically dropped at the
 end of a session, or optionally at the end of the current transaction.
@@ -33,10 +34,13 @@ the PostgreSQL catalog and the performances will start to fall.
 Using Global Temporary Table will save this catalog bloating. They
 are permanent tables and so on permanent indexes, they will be found
 by the autovacuum process in contrary of local temporary tables.
+The very intensive creation of temporary table can also generate lot 
+of replication lag.
 
-The objective of this extension it to create a POC about the Global
-Temporary Table feature. Don't expect high performances if you insert
-huge amount of tuple in these tables.
+Don't expect high performances if you insert huge amount of tuple in
+these tables. The use of Row Security Level and cleanup by a background
+worker is far slower than the use of regular temporary tables. Use it
+only if you have the pg_catalog bloating issue.
 
 Installation
 ============
@@ -84,7 +88,7 @@ Default is to remove rows by chunk of 250000 tuples.
 
 Once this configuration is done, restart PostgreSQL.
 
-The background writer will wake up each naptime interval to scan
+The background worker will wake up each naptime interval to scan
 all database using the pgtt extension. It will then remove all rows
 that don't belong to an existing session or transaction.
 
@@ -113,6 +117,11 @@ Here it could be like creating a table:
 		id integer,
 		lbl text
 	) ON COMMIT PRESERVE ROWS;
+
+Once the table is created it can be used by the application like any
+temporary table. A session will only see its rows for the time of a
+session or a transaction following if the temporary table preserves
+the rows at end of the transaction or deleted them at commit.
 
 
 To drop a Global Temporary Table you must use the following function:
@@ -156,7 +165,7 @@ to a GTT table and its corresponding view. When it is called it just
 execute a "DROP TABLE IF EXISTS pgtt_schema.pgtt_tbname CASCADE;".
 Using CASCADE will also drop the associated view.
 
-The exgtension also define four functions to manipulate the 'lsid' type:
+The extension also define four functions to manipulate the 'lsid' type:
     
 * get_session_id(): generate the local session id and returns an lsid.
 * generate_lsid(int, int): generate a local session id based on a backend
