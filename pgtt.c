@@ -78,6 +78,14 @@ typedef struct Lsid {
 #define PGTT_NSPNAME "pgtt_schema"
 
 /* Define ProcessUtility hook proto/parameters following the PostgreSQL version */
+#if PG_VERSION_NUM >= 140000
+#define GTT_PROCESSUTILITY_PROTO PlannedStmt *pstmt, const char *queryString, \
+					bool readOnlyTree, \
+                                        ProcessUtilityContext context, ParamListInfo params, \
+                                        QueryEnvironment *queryEnv, DestReceiver *dest, \
+                                        QueryCompletion *qc
+#define GTT_PROCESSUTILITY_ARGS pstmt, queryString, readOnlyTree, context, params, queryEnv, dest, qc
+#else
 #if PG_VERSION_NUM >= 130000
 #define GTT_PROCESSUTILITY_PROTO PlannedStmt *pstmt, const char *queryString, \
                                         ProcessUtilityContext context, ParamListInfo params, \
@@ -101,6 +109,7 @@ typedef struct Lsid {
                                         ParamListInfo params, bool isTopLevel, \
                                         DestReceiver *dest, char *completionTag
 #define GTT_PROCESSUTILITY_ARGS parsetree, queryString, params, isTopLevel, dest, completionTag
+#endif
 #endif
 #endif
 
@@ -209,7 +218,7 @@ gtt_check_command(GTT_PROCESSUTILITY_PROTO)
 	Node    *parsetree = pstmt->utilityStmt;
 #endif
 
-	Assert(query != NULL);
+	Assert(queryString != NULL);
 	Assert(parsetree != NULL);
 
 	elog(DEBUG1, "GTT DEBUG: processUtility query %s", queryString);
@@ -331,7 +340,7 @@ gtt_check_command(GTT_PROCESSUTILITY_PROTO)
 	elog(DEBUG1, "GTT DEBUG: looking for drop of tablename: %s", relationNameValue->val.str);
 
 				/* Truncate relname to appropriate length */
-				StrNCpy(tbname, psprintf("pgtt_%s", relationNameValue->val.str), NAMEDATALEN);
+				strncpy(tbname, psprintf("pgtt_%s", relationNameValue->val.str), NAMEDATALEN);
 
 				/*
 				 * Look if we have a GTT table called pgtt_||name
@@ -511,7 +520,7 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 	}
 
 	/* Change relation name and truncate relname to appropriate length */
-	StrNCpy(tbname, psprintf("pgtt_%s", stmt->relation->relname), NAMEDATALEN);
+	strncpy(tbname, psprintf("pgtt_%s", stmt->relation->relname), NAMEDATALEN);
 
 	/* Set DDL to create the unlogged table */
 	pos = strpos(asc_toupper(queryString, strlen(queryString)), asc_toupper(stmt->relation->relname, strlen(stmt->relation->relname)), 0) + strlen(stmt->relation->relname);
@@ -886,8 +895,8 @@ generate_lsid(PG_FUNCTION_ARGS)
 	int        st  = Int32GetDatum((int32) PG_GETARG_INT32(0));
 	int        pid = Int32GetDatum((int32) PG_GETARG_INT32(1));
 
-	Assert(st != NULL);
-	Assert(pid != NULL);
+	Assert(st);
+	Assert(pid);
 
 	if (st <= 0 || pid <= 0)
 		ereport(ERROR,
