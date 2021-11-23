@@ -242,3 +242,13 @@ The pgtt_schema.pgtt_maintenance() has the following actions:
 The function returns the total number of rows deleted. It must not be
 run manually but only run by pgtt_bgw the background worker.
 
+Test
+====
+
+Once the extension is installed, that shared_preload_library is set and
+PostgreSQL restarted you can verify that the extension is working as
+expected using:
+
+    LANG=C psql -f test/test_gtt.sql > result.log 2>&1 && diff result.log test/expected/test_gtt.txt
+
+
