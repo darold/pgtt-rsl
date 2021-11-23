@@ -9,7 +9,7 @@
  * This program is open source, licensed under the PostgreSQL license.
  * For license terms, see the COPYING file.
  *
- * Copyright (c) 2018-2019 Gilles Darold
+ * Copyright (c) 2018-2021 Gilles Darold
  */
 
 #include "postgres.h"
