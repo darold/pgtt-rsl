@@ -297,8 +297,13 @@ gtt_check_command(GTT_PROCESSUTILITY_PROTO)
 			{
 				List *relationNameList = NULL;
 				int relationNameListLength = 0;
+#if PG_VERSION_NUM < 150000
 				Value *relationSchemaNameValue = NULL;
 				Value *relationNameValue = NULL;
+#else
+				String *relationSchemaNameValue = NULL;
+				String *relationNameValue = NULL;
+#endif
 				int  mainTableOid = 0;
 				char tbname[NAMEDATALEN];
 
@@ -339,17 +344,39 @@ gtt_check_command(GTT_PROCESSUTILITY_PROTO)
 				/* prefix with schema name if it is not added already */
 				if (relationSchemaNameValue == NULL)
 				{
+#if PG_VERSION_NUM < 150000
 					Value *schemaNameValue = makeString(pstrdup(PGTT_NSPNAME));
+#else
+					String *schemaNameValue = makeString(pstrdup(PGTT_NSPNAME));
+#endif
 					relationNameList = lcons(schemaNameValue, relationNameList);
 				}
 
-				if (strpos(asc_toupper(relationNameValue->val.str, strlen(relationNameValue->val.str)), asc_toupper("pgtt_", 5), 0) == 0)
+				if (strpos(
+#if PG_VERSION_NUM < 150000
+				asc_toupper(relationNameValue->val.str,  strlen(relationNameValue->val.str)),
+#else
+				asc_toupper(relationNameValue->sval,  strlen(relationNameValue->sval)),
+#endif
+						       	asc_toupper("pgtt_", 5), 0) == 0)
 					break;
 
-	elog(DEBUG1, "GTT DEBUG: looking for drop of tablename: %s", relationNameValue->val.str);
+	elog(DEBUG1, "GTT DEBUG: looking for drop of tablename: %s",
+#if PG_VERSION_NUM < 150000
+			relationNameValue->val.str
+#else
+			relationNameValue->sval
+#endif
+	    );
 
 				/* Truncate relname to appropriate length */
-				strncpy(tbname, psprintf("pgtt_%s", relationNameValue->val.str), NAMEDATALEN);
+				strncpy(tbname, psprintf("pgtt_%s",
+#if PG_VERSION_NUM < 150000
+							relationNameValue->val.str
+#else
+							relationNameValue->sval
+#endif
+							), NAMEDATALEN);
 
 				/*
 				 * Look if we have a GTT table called pgtt_||name
