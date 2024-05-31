@@ -7,7 +7,7 @@ Level and views. A background worker is responsible to periodically
 remove obsolete rows. This implementation is designed to avoid catalog
 bloating when creating a lot of temporary tables. If you are looking
 for Oracle style Global Temporary Tables but with high performances
-you should look at [pgtt-2.x](https://github.com/darold/pgtt) which is
+you should look at [pgtt](https://github.com/darold/pgtt) which is
 based on temporary tables but will not address the bloat problem.
 
 PostgreSQL native temporary tables are automatically dropped at the
@@ -24,7 +24,7 @@ temporary table are stored in the pg_temp namespace.
 Usually this is not a problem, you have learn to deal with the
 temporary table behavior of PostgreSQL but the problem comes when
 you are migrating an Oracle database to PostgreSQL. You have to
-rewrite the SQL and PlPgSQL code to follow the application logic and
+rewrite the SQL and plpgsql code to follow the application logic and
 use PostgreSQL temporary table, that mean recreating the temporary
 table everywhere it is used.
 
