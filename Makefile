@@ -1,8 +1,8 @@
-EXTENSION  = pgtt
+EXTENSION  = pgtt_rsl
 EXTVERSION = $(shell grep default_version $(EXTENSION).control | \
 	       sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
 
-PGFILEDESC = "pgtt - Global Temporary Tables for PostgreSQL"
+PGFILEDESC = "pgtt_rsl - Global Temporary Tables for PostgreSQL"
 
 PG_CONFIG = pg_config
 
@@ -12,7 +12,7 @@ PG_LDFLAGS = -L$(libpq_builddir) -lpq
 SHLIB_LINK = $(libpq)
 
 DOCS = $(wildcard doc/README*)
-MODULES = pgtt
+MODULES = pgtt_rsl
 MODULE_big = pgtt_bgw
 OBJS = pgtt_bgw.o
 

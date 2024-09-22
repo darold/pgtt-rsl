@@ -121,7 +121,7 @@ _PG_init(void)
 {
 	BackgroundWorker worker;
 
-	DefineCustomIntVariable("pgtt.naptime",
+	DefineCustomIntVariable("pgtt_bgw.naptime",
 				"How often maintenance of Global Temporary Tables is called (in seconds).",
 				NULL,
 				&pgtt_naptime,
@@ -134,7 +134,7 @@ _PG_init(void)
 				NULL,
 				NULL);
 
-	DefineCustomStringVariable("pgtt.analyze",
+	DefineCustomStringVariable("pgtt_bgw.analyze",
 				 "Whether to force an analyze after a maintenance on a GTT. Possible values: 'off' (default) or 'on'. Default is to let autoanalyze do the job.",
 				 NULL,
 				 &pgtt_analyze,
@@ -145,7 +145,7 @@ _PG_init(void)
 				 NULL,
 				 NULL);
 
-	DefineCustomIntVariable("pgtt.chunk_size",
+	DefineCustomIntVariable("pgtt_bgw.chunk_size",
 				"Maximum number of rows to delete in Global Temporary Tables.",
 				NULL,
 				&pgtt_chunk_size,
@@ -163,7 +163,7 @@ _PG_init(void)
 		return;
 
 	/* Start when database starts */
-	sprintf(worker.bgw_name, "pgtt master background worker");
+	sprintf(worker.bgw_name, "pgtt_rsl master background worker");
 	worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
 	worker.bgw_restart_time = 600; /* Restart after 10min in case of crash */

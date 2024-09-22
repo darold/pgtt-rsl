@@ -1,4 +1,4 @@
-default_version = '1.3.0'
+default_version = '2.0.0'
 comment = 'Extension to add Global Temporary Tables feature to PostgreSQL'
-module_pathname = '$libdir/pgtt'
+module_pathname = '$libdir/pgtt_rsl'
 relocatable = false

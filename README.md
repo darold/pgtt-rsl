@@ -1,7 +1,7 @@
 PG Global Temporary Tables
 ==========================
 
-pgtt v1.x is a PostgreSQL extension to create and manage Oracle-style
+pgtt_rsl v1.x is a PostgreSQL extension to create and manage Oracle-style
 Global Temporary Tables. It is based on unlogged tables, Row Security
 Level and views. A background worker is responsible to periodically
 remove obsolete rows. This implementation is designed to avoid catalog
@@ -37,16 +37,16 @@ by the autovacuum process in contrary of local temporary tables.
 The very intensive creation of temporary table can also generate lot 
 of replication lag.
 
-Don't expect high performances if you insert huge amount of tuple in
+Don't expect high performances if you insert huge amount of tuples in
 these tables. The use of Row Security Level and cleanup by a background
-worker is far slower than the use of regular temporary tables. Use it
-only if you have the pg_catalog bloating issue.
+worker is slower than the use of regular temporary tables. Use it only
+if you have the pg_catalog bloating issue.
 
 Installation
 ============
 
-To install the pgtt extension you need a PostgreSQL version upper than
-9.5. Untar the pgtt tarball anywhere you want then you'll need to
+To install the pgtt_rsl extension you need a PostgreSQL version upper than
+9.5. Untar the pgtt_rsl tarball anywhere you want then you'll need to
 compile it with pgxs. So the pg_config tool must be in your path.
 
 Depending on your installation, you may need to install some devel
@@ -59,10 +59,10 @@ Configuration
 The background worker used to remove obsolete rows from global
 temporary tables must be loaded on database start by adding the
 library to shared_preload_libraries in postgresql.conf. You also
-need to load the pgtt library defining C function used by the
+need to load the pgtt_rsl library defining C function used by the
 extension.
 
-* shared_preload_libraries='pgtt_bgw,pgtt'
+* shared_preload_libraries='pgtt_bgw,pgtt_rsl'
 
 You'll be able to set the two following parameters in configuration
 file:
@@ -72,7 +72,7 @@ file:
 this is the interval used between each cleaning cycle, 5 seconds
 per default.
 
-* pgtt.analyze = off
+* pgtt_bgw.analyze = off
 
 Force the background worker to execute an ANALYZE after each run.
 Default is off, it is better to let autoanalyze to the work.
@@ -81,7 +81,7 @@ To avoid too much performances lost when the background worker is
 deleting obsolete rows the limit of rows removed at one time is
 defined by the following directive:
 
-* pgtt.chunk_size = 250000
+* pgtt_bgw.chunk_size = 250000
 
 Default is to remove rows by chunk of 250000 tuples.
 
@@ -89,7 +89,7 @@ Default is to remove rows by chunk of 250000 tuples.
 Once this configuration is done, restart PostgreSQL.
 
 The background worker will wake up each naptime interval to scan
-all database using the pgtt extension. It will then remove all rows
+all database using the pgtt_rsl extension. It will then remove all rows
 that don't belong to an existing session or transaction.
 
 Use of the extension
@@ -98,7 +98,7 @@ Use of the extension
 In all database where you want to use Global Temporary Tables you
 will have to create the extension using:
 
-* CREATE EXTENSION pgtt;
+* CREATE EXTENSION pgtt_rsl;
 
 The extension comes with two functions that must be used instead of
 the CREATE GLOBAL TEMPORARY TABLE statement. To create a GTT table
@@ -216,7 +216,7 @@ the background worker wakes up.
 
 To avoid too much performances lost when the background worker is
 deleting rows the number of rows removed at one time is defined
-by the pgtt_chunk_size GUC. It is passed to the function as second
+by the pgtt_rsl.chunk_size GUC. It is passed to the function as second
 parameter, default: 250000.
 
 The third parameter is use to force an ANALYZE to be perform just

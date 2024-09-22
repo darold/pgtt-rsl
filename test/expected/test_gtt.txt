@@ -21,7 +21,23 @@ GRANT
 (1 row)
 
 GRANT
+CREATE SCHEMA
+GRANT
+ pgtt_create_table 
+-------------------
+ t
+(1 row)
+
+GRANT
+CREATE FUNCTION
+GRANT
 You are now connected to database "gtt_testdb" as user "test_gtt1".
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
 INSERT 0 3
  count 
 -------
@@ -104,7 +120,7 @@ UPDATE 3
      1
 (1 row)
 
-UPDATE 3
+DO
  count 
 -------
      1
@@ -145,11 +161,6 @@ INSERT 0 3
 (1 row)
 
 INSERT 0 3
- count 
--------
-     6
-(1 row)
-
  count 
 -------
      6
@@ -265,13 +276,19 @@ You are now connected to database "gtt_testdb" as user "postgres".
      0
 (1 row)
 
-psql:test/test_gtt.sql:213: NOTICE:  drop cascades to view t_glob_temptable1
+psql:test/test_gtt.sql:244: NOTICE:  drop cascades to view t_glob_temptable1
  pgtt_drop_table 
 -----------------
  t
 (1 row)
 
-psql:test/test_gtt.sql:216: NOTICE:  drop cascades to view t_glob_temptable2
+psql:test/test_gtt.sql:247: NOTICE:  drop cascades to view t_glob_temptable2
+ pgtt_drop_table 
+-----------------
+ t
+(1 row)
+
+psql:test/test_gtt.sql:250: NOTICE:  drop cascades to view foo.t_glob_temptable1
  pgtt_drop_table 
 -----------------
  t

@@ -1,5 +1,5 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
-\echo Use "CREATE EXTENSION pgtt" to load this file. \quit
+\echo Use "CREATE EXTENSION pgtt_rsl" to load this file. \quit
 
 -- Create the type used to store the local session id
 CREATE TYPE lsid;
