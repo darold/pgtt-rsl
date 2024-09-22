@@ -132,7 +132,7 @@ SELECT pg_catalog.pg_extension_config_dump('pgtt_global_temp', '');
 -- The pgtt extenstion allow intercepting this syntax in the processUtility hook and
 -- create the GTT.
 ----
-CREATE FUNCTION pgtt_create_table (tb_name name, code text, preserved boolean DEFAULT false, relnspname name DEFAULT 'public')
+CREATE FUNCTION pgtt_schema.pgtt_create_table (tb_name name, code text, preserved boolean DEFAULT false, relnspname name DEFAULT 'public')
 RETURNS boolean
 AS $$
 DECLARE
@@ -256,7 +256,7 @@ LANGUAGE plpgsql SECURITY DEFINER;
 -- When the function is called at postmaster startup (iter = 0) it will
 -- just truncate all the global temporary tables.
 ----
-CREATE OR REPLACE FUNCTION pgtt_maintenance (iter bigint DEFAULT 1, chunk_size integer DEFAULT 250000, analyze_table boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION pgtt_schema.pgtt_maintenance (iter integer DEFAULT 1, chunk_size integer DEFAULT 250000, analyze_table boolean DEFAULT false)
 RETURNS bigint
 AS $$
 DECLARE
@@ -300,7 +300,7 @@ BEGIN
 		-- With GTT where tuples do not survive a transaction
 		ELSE
 			-- delete rows from the GTT table that do not belong to an active transaction
-			EXECUTE 'DELETE FROM ' || class_info.relid::regclass || ' WHERE ctid = ANY(ARRAY(SELECT ctid FROM ' || class_info.relid::regclass || ' WHERE NOT (xmin = ANY(ARRAY(SELECT backend_xid FROM pg_stat_activity))) LIMIT ' || chunk_size || '))';
+			EXECUTE 'DELETE FROM ' || class_info.relid::regclass || ' WHERE ctid = ANY(ARRAY(SELECT ctid FROM ' || class_info.relid::regclass || ' WHERE NOT (xmin = ANY(ARRAY(SELECT DISTINCT backend_xmin FROM pg_stat_activity WHERE backend_xmin IS NOT NULL))) LIMIT ' || chunk_size || '))';
 			GET DIAGNOSTICS nrows = ROW_COUNT;
 			total_nrows := total_nrows + nrows;
 		END IF;

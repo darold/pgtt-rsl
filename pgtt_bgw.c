@@ -58,11 +58,19 @@
 #define MIN_PGTT_SLEEPTIME 1    /* second */
 #define MAX_PGTT_SLEEPTIME 60  /* seconds */
 
+#define BGW_RESTART_TIME 600 /* Restart after 10min in case of crash */
+
+#define PGTT_FUNCTION_INFO_V1(fn)                                                                    \
+        PGDLLEXPORT Datum fn(PG_FUNCTION_ARGS);                                     \
+        PG_FUNCTION_INFO_V1(fn)
+
 PG_MODULE_MAGIC;
 
 void _PG_init(void);
-void pgtt_bgw_main(Datum main_arg) ;
-void pgtt_bgw_maintenance(Datum main_arg);
+//void pgtt_bgw_main(Datum main_arg) ;
+//void pgtt_bgw_maintenance(Datum main_arg);
+extern PGDLLEXPORT void pgtt_bgw_main(Datum main_arg);
+extern PGDLLEXPORT void pgtt_bgw_maintenance(Datum main_arg);
 
 static List *get_database_list(void);
 
@@ -163,15 +171,16 @@ _PG_init(void)
 		return;
 
 	/* Start when database starts */
-	sprintf(worker.bgw_name, "pgtt_rsl master background worker");
+	memset(&worker, 0, sizeof(worker));
+	snprintf(worker.bgw_name, BGW_MAXLEN, "pgtt_rsl master background worker");
 	worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+	worker.bgw_restart_time = BGW_RESTART_TIME;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
-	worker.bgw_restart_time = 600; /* Restart after 10min in case of crash */
 #if (PG_VERSION_NUM < 100000)
 	worker.bgw_main = pgtt_bgw_main;
 #else
-	sprintf(worker.bgw_library_name, "pgtt_bgw");
-	sprintf(worker.bgw_function_name, "pgtt_bgw_main");
+	snprintf(worker.bgw_library_name, BGW_MAXLEN, "pgtt_bgw");
+	snprintf(worker.bgw_function_name, BGW_MAXLEN, CppAsString(pgtt_bgw_main));
 #endif
 	worker.bgw_main_arg = (Datum) 0;
 #if (PG_VERSION_NUM >= 90400)
@@ -338,6 +347,9 @@ pgtt_bgw_main(Datum main_arg)
 		ereport(DEBUG1,
 				(errmsg("Latch status after waitlatch call: %d", MyProc->procLatch.is_set)));
 	} /* End of main loop */
+
+	ereport(LOG, (errmsg("pgtt_rsl background worker shutting down")));
+	proc_exit(1);
 }
 
 /*
@@ -391,7 +403,7 @@ pgtt_bgw_maintenance(Datum main_arg)
 	initStringInfo(&buf);
 
 	/* First determine if pgtt is even installed in this database */
-	appendStringInfo(&buf, "SELECT extname FROM pg_catalog.pg_extension WHERE extname = 'pgtt'");
+	appendStringInfo(&buf, "SELECT extname FROM pg_catalog.pg_extension WHERE extname = 'pgtt_rsl'");
 
 	ereport(DEBUG1,
 			(errmsg("Checking if pgtt extension is installed in database: %s", dbname)));
