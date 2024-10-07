@@ -625,7 +625,7 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
 	
 	/* Set owner of the view to current user, not the function definer (superuser)*/
-	newQueryString = psprintf("ALTER VIEW %s OWNER TO %s", stmt->relation->relname, GetUserNameFromId(GetUserId(), false));
+	newQueryString = psprintf("ALTER VIEW %s OWNER TO %s", stmt->relation->relname, GetUserNameFromId(GetSessionUserId(), false));
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
