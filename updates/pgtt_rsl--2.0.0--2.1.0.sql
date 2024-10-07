@@ -1,7 +1,4 @@
--- complain if script is sourced in psql, rather than via CREATE EXTENSION
-\echo Use "CREATE EXTENSION pgtt_rsl" to load this file. \quit
-
-CREATE FUNCTION pgtt_schema.pgtt_create_table (tb_name name, code text, preserved boolean DEFAULT false, relnspname name DEFAULT 'public')
+CREATE OR REPLACE FUNCTION pgtt_schema.pgtt_create_table (tb_name name, code text, preserved boolean DEFAULT false, relnspname name DEFAULT 'public')
 RETURNS boolean
 AS $$
 DECLARE
@@ -49,7 +46,7 @@ BEGIN
 		-- to show only rows where pgtt_sessid is the same as
 		-- current pid and rows that have been created in the
 		-- current transaction.
-		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)', relid);
+		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = get_session_id() AND xmin::text >= txid_current()::text) WITH CHECK (true)', relid);
 	END IF;
 	-- Force policy to be active for the owner of the table
 	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s FORCE ROW LEVEL SECURITY', relid);
@@ -65,7 +62,7 @@ BEGIN
 	IF preserved THEN
 		EXECUTE format('CREATE VIEW %I.%I WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id()', relnspname, tb_name, column_list, relid);
 	ELSE
-		EXECUTE format('CREATE VIEW %I.%I WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id() AND xmin::text = txid_current()::text', relnspname, tb_name, column_list, relid);
+		EXECUTE format('CREATE VIEW %I.%I WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id() AND xmin::text >= txid_current()::text', relnspname, tb_name, column_list, relid);
 	END IF;
 
 	-- Set owner of the view to session user, not the function definer (superuser)

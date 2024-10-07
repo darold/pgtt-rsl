@@ -1,7 +1,7 @@
 ----
 -- Regression test to Global Temporary Table implementation
 --
--- LANC=C psql -f test/test_gtt.sql > result.txt 2>&1
+-- LANG=C psql -f test/test_gtt.sql > result.txt 2>&1
 -- diff result.txt test/expected/test_gtt.txt
 ----
 DROP DATABASE IF EXISTS gtt_testdb;
@@ -32,7 +32,7 @@ GRANT ALL ON t_glob_temptable2 TO test_gtt1,test_gtt2;
 
 CREATE SCHEMA foo;
 GRANT ALL ON SCHEMA foo TO test_gtt1,test_gtt2;
-SELECT pgtt_schema.pgtt_create_table('t_glob_temptable1', 'id integer, lbl text', true, 'foo');
+SELECT pgtt_schema.pgtt_create_table('t_glob_temptable1', 'id integer, lbl text', false, 'foo');
 GRANT ALL ON foo.t_glob_temptable1 TO test_gtt1,test_gtt2;
 
 CREATE FUNCTION check_pgtt_count (tbname name, nspname name DEFAULT 'public') RETURNS bigint AS $$
@@ -60,12 +60,20 @@ INSERT INTO t_glob_temptable1 SELECT * FROM generate_series(1,3);
 -- Should return 3 as we are still in the same session
 SELECT count(*) FROM t_glob_temptable1;
 
+BEGIN;
 -- Insert 3 record in the view
 INSERT INTO foo.t_glob_temptable1 SELECT * FROM generate_series(1,3);
 
--- Should return 3 as we are still in the same session
+-- Add a SAVEPOINT to increase the transaction id
+SAVEPOINT sp_foo;
+
+-- Should return 3 as we are still in the same transaction
 SELECT count(*) FROM foo.t_glob_temptable1;
 
+COMMIT;
+
+-- Should return 0 as we are still in the same session
+SELECT count(*) FROM foo.t_glob_temptable1;
 
 -- Reconnect as test_gtt2 user, data must not be visible anymore unless to be superuser
 \c - test_gtt2

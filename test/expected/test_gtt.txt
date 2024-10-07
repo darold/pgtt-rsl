@@ -38,10 +38,18 @@ INSERT 0 3
      3
 (1 row)
 
+BEGIN
 INSERT 0 3
+SAVEPOINT
  count 
 -------
      3
+(1 row)
+
+COMMIT
+ count 
+-------
+     0
 (1 row)
 
 You are now connected to database "gtt_testdb" as user "test_gtt2".
@@ -276,19 +284,19 @@ You are now connected to database "gtt_testdb" as user "postgres".
      0
 (1 row)
 
-psql:test/test_gtt.sql:244: NOTICE:  drop cascades to view t_glob_temptable1
+psql:test/test_gtt.sql:252: NOTICE:  drop cascades to view t_glob_temptable1
  pgtt_drop_table 
 -----------------
  t
 (1 row)
 
-psql:test/test_gtt.sql:247: NOTICE:  drop cascades to view t_glob_temptable2
+psql:test/test_gtt.sql:255: NOTICE:  drop cascades to view t_glob_temptable2
  pgtt_drop_table 
 -----------------
  t
 (1 row)
 
-psql:test/test_gtt.sql:250: NOTICE:  drop cascades to view foo.t_glob_temptable1
+psql:test/test_gtt.sql:258: NOTICE:  drop cascades to view foo.t_glob_temptable1
  pgtt_drop_table 
 -----------------
  t
