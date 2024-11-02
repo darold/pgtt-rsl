@@ -36,6 +36,15 @@
 #include "executor/spi.h"
 #include "storage/proc.h"
 #include "utils/builtins.h"
+#include "catalog/pg_collation.h"
+#include "utils/inval.h"
+#include "catalog/partition.h"
+#include "catalog/index.h"
+#include "storage/lmgr.h"
+#include "parser/analyze.h"
+
+/* for regexp search */
+#include "regex/regexport.h"
 
 #if (PG_VERSION_NUM >= 120000)
 #include "access/genam.h"
@@ -51,12 +60,22 @@
 #error Minimum version of PostgreSQL required is 9.5
 #endif
 
+#define PGTT_NAMESPACE_NAME "pgtt_schema"
 #define CATALOG_GLOBAL_TEMP_REL	"pgtt_global_temp"
 #define Anum_pgtt_relid   1
 #define Anum_pgtt_viewid  2
 #define Anum_pgtt_datcrea 3
+#define Anum_pgtt_preserved 4
+
+#if PG_VERSION_NUM >= 140000
+#define STMT_OBJTYPE(stmt) stmt->objtype
+#else
+#define STMT_OBJTYPE(stmt) stmt->relkind
+#endif
 
 PG_MODULE_MAGIC;
+
+#define NOT_IN_PARALLEL_WORKER (ParallelWorkerNumber < 0)
 
 PGDLLEXPORT Datum   get_session_id(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(get_session_id);
@@ -78,6 +97,27 @@ typedef struct Lsid {
     int      backend_start_time;
     int      backend_pid;
 } Lsid;
+
+struct DropRelationCallbackState
+{
+	/* These fields are set by RemoveRelations: */
+	char            expected_relkind;
+	LOCKMODE        heap_lockmode;
+	/* These fields are state to track which subsidiary locks are held: */
+	Oid                     heapOid;
+	Oid                     partParentOid;
+	/* These fields are passed back by RangeVarCallbackForDropRelation: */
+	char            actual_relkind;
+	char            actual_relpersistence;
+};
+
+static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
+									Oid oldRelOid, void *arg);
+static bool is_gtt_registered(Oid relid);
+
+/* Regular expression search */
+#define CREATE_GLOBAL_REGEXP "^\\s*CREATE\\s+(?:\\/\\*\\s*)?GLOBAL(?:\\s*\\*\\/)?"
+#define CREATE_WITH_FK_REGEXP "\\s*FOREIGN\\s+KEY"
 
 /* Default schema where GTT objects are saved */
 #define PGTT_NSPNAME "pgtt_schema"
@@ -120,9 +160,17 @@ typedef struct Lsid {
 
 /* Saved hook values in case of unload */
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
+static post_parse_analyze_hook_type prev_post_parse_analyze_hook = NULL;
+
 /* Hook to intercept CREATE GLOBAL TEMPORARY TABLE query */
 static void gtt_ProcessUtility(GTT_PROCESSUTILITY_PROTO);
 static bool gtt_check_command(GTT_PROCESSUTILITY_PROTO);
+
+#if PG_VERSION_NUM >= 140000
+static void gtt_post_parse_analyze(ParseState *pstate, Query *query, struct JumbleState * jstate);
+#else
+static void gtt_post_parse_analyze(ParseState *pstate, Query *query);
+#endif
 
 /* Function declarations */
 
@@ -131,9 +179,7 @@ void	_PG_fini(void);
 
 int strpos(char *hay, char *needle, int offset);
 static void gtt_override_create_table(GTT_PROCESSUTILITY_PROTO);
-static void gtt_drop_table_statement(Oid relid, const char *relname);
-static int search_relation(char *relname);
-static void gtt_unregister_global_temporary_table(Oid relid, const char *relname);
+static void gtt_override_create_table_as(GTT_PROCESSUTILITY_PROTO);
 
 /*
  * Module load callback
@@ -165,10 +211,10 @@ _PG_init(void)
 	 */
 
 	/* Disable hook for the moment */
-	/*
 	prev_ProcessUtility = ProcessUtility_hook;
 	ProcessUtility_hook = gtt_ProcessUtility;
-	*/
+	prev_post_parse_analyze_hook = post_parse_analyze_hook;
+	post_parse_analyze_hook = gtt_post_parse_analyze;
 }
 
 /*
@@ -186,14 +232,24 @@ _PG_fini(void)
 static void
 gtt_ProcessUtility(GTT_PROCESSUTILITY_PROTO)
 {
+	//bool isTopLevel = (context == PROCESS_UTILITY_TOPLEVEL);
+
 	/* only in the top process */
 	if (ParallelWorkerNumber == -1)
 	{
 		/*
-		 * Check if we have a CREATE GLOBAL TEMPORARY TABLE, in
-		 * this case do more work than the simple table creation
+		 * Check if we have a CREATE GLOBAL TEMPORARY TABLE
+		 * in this case do more work than the simple table
+		 * creation see SQL file in sql/ subdirectory.
+		 *
+		 * If the current query use a GTT that is not already
+		 * created create it.
 		 */
-		(void) gtt_check_command(GTT_PROCESSUTILITY_ARGS);
+		if (gtt_check_command(GTT_PROCESSUTILITY_ARGS))
+		{
+			elog(DEBUG1, "Work on GTT from Utility Hook done, get out of UtilityHook immediately.");
+			return;
+		}
 	}
 
 	elog(DEBUG1, "GTT DEBUG: restore ProcessUtility");
@@ -211,6 +267,20 @@ gtt_ProcessUtility(GTT_PROCESSUTILITY_PROTO)
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
+}
+
+/*
+ * Before acquiring a table lock, check whether we have sufficient rights.
+ * In the case of DROP INDEX, also try to lock the table before the index.
+ * Also, if the table to be dropped is a partition, we try to lock the parent
+ * first.
+ */
+static void
+RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid, Oid oldRelOid,
+                                                                void *arg)
+{
+	// do nothing
+	return;
 }
 
 /*
@@ -240,12 +310,15 @@ gtt_check_command(GTT_PROCESSUTILITY_PROTO)
 	if (!OidIsValid(schemaOid))
 		return work_done;
 
+	/* Intercept CREATE / DROP TABLE statements */
 	switch (nodeTag(parsetree))
 	{
 		case T_CreateStmt:
 		{
 			/* CREATE TABLE statement */
 			CreateStmt *stmt = (CreateStmt *)parsetree;
+			bool regexec_result;
+
 			name = stmt->relation->relname;
 
 			/*
@@ -255,12 +328,44 @@ gtt_check_command(GTT_PROCESSUTILITY_PROTO)
 			 */
 			if (stmt->relation->relpersistence != RELPERSISTENCE_TEMP)
 				break;
-			/* 
-			 * This condition must be replaced by a remove of GLOBAL keyword deprecation.
+
+			/*
+			 * We only take care here of statements with the GLOBAL keyword
+			 * even if it is deprecated and generate a warning.
 			 */
-			if (strstr(asc_toupper(queryString, strlen(queryString)), "GLOBAL") == NULL ||
-					strpos(asc_toupper(queryString, strlen(queryString)), "GLOBAL", 0) != 7)
+			regexec_result = RE_compile_and_execute(
+					cstring_to_text(CREATE_GLOBAL_REGEXP),
+					VARDATA_ANY(cstring_to_text((char *) queryString)),
+					VARSIZE_ANY_EXHDR(cstring_to_text((char *) queryString)),
+					REG_ADVANCED | REG_ICASE | REG_NEWLINE,
+					DEFAULT_COLLATION_OID,
+					0, NULL);
+
+			if (!regexec_result)
 				break;
+
+			/* Check if there is foreign key defined in the statement */
+			regexec_result = RE_compile_and_execute(
+					cstring_to_text(CREATE_WITH_FK_REGEXP),
+					VARDATA_ANY(cstring_to_text((char *) queryString)),
+					VARSIZE_ANY_EXHDR(cstring_to_text((char *) queryString)),
+					REG_ADVANCED | REG_ICASE | REG_NEWLINE,
+					DEFAULT_COLLATION_OID,
+					0, NULL);
+			if (regexec_result)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+						 errmsg("attempt to create referential integrity constraint on global temporary table")));
+
+#if (PG_VERSION_NUM >= 100000)
+			/*
+			 * We do not allow partitioning on GTT, not that PostgreSQL can
+			 * not do it but because we want to mimic the Oracle or other
+			 * RDBMS behavior.
+			 */
+			if (stmt->partspec != NULL)
+				elog(ERROR, "Global Temporary Table do not support partitioning.");
+#endif
 
 			/*
 			 * What to do at commit time for global temporary relations
@@ -269,19 +374,21 @@ gtt_check_command(GTT_PROCESSUTILITY_PROTO)
 			if (stmt->oncommit == ONCOMMIT_DELETE_ROWS)
 				preserved = false;
 
-			/* 
+			/*
 			 * Case of ON COMMIT DROP and GLOBAL TEMPORARY might not be
 			 * allowed, this is the same as using a normal temporary table
 			 * inside a transaction. Here the table should be dropped after
 			 * commit so it will not survive a transaction.
-			 * Throw an error in this case.
+			 * Throw an error to prevent the use of this clause.
 			 */
 			if (stmt->oncommit == ONCOMMIT_DROP)
 				ereport(ERROR,
 						(errmsg("use of ON COMMIT DROP with GLOBAL TEMPORARY is not allowed"),
 						 errhint("Create a local temporary table inside a transaction instead, this is the default behavior.")));
 
-	elog(DEBUG1, "GTT DEBUG: Create table %s, has rows persistance: %d, global at position: %d", name, preserved, strpos(asc_toupper(queryString, strlen(queryString)), "GLOBAL", 0));
+			elog(DEBUG1, "Create table %s, rows persistance: %d, GLOBAL at position: %d",
+						name, preserved,
+						strpos(asc_toupper(queryString, strlen(queryString)), "GLOBAL", 0));
 
 			/* Create the Global Temporary Table with all associated object */
 			gtt_override_create_table(GTT_PROCESSUTILITY_ARGS);
@@ -290,142 +397,88 @@ gtt_check_command(GTT_PROCESSUTILITY_PROTO)
 			break;
 		}
 
-		case T_DropStmt:
+		case T_CreateTableAsStmt:
 		{
-			if (((DropStmt *)parsetree)->removeType == OBJECT_TABLE ||
-				((DropStmt *)parsetree)->removeType == OBJECT_VIEW)
-			{
-				List *relationNameList = NULL;
-				int relationNameListLength = 0;
-#if PG_VERSION_NUM < 150000
-				Value *relationSchemaNameValue = NULL;
-				Value *relationNameValue = NULL;
-#else
-				String *relationSchemaNameValue = NULL;
-				String *relationNameValue = NULL;
-#endif
-				int  mainTableOid = 0;
-				char tbname[NAMEDATALEN];
+			/* CREATE TABLE AS statement */
+			CreateTableAsStmt *stmt = (CreateTableAsStmt *)parsetree;
 
-				relationNameList = (List *) linitial(((DropStmt *)parsetree)->objects);
-				relationNameListLength = list_length(relationNameList);
+			bool regexec_result;
 
-				switch (relationNameListLength)
-				{
-					case 1:
-					{
-						relationNameValue = linitial(relationNameList);
-						break;
-					}
+			name = stmt->into->rel->relname;
 
-					case 2:
-					{
-						relationSchemaNameValue = linitial(relationNameList);
-						relationNameValue = lsecond(relationNameList);
-						break;
-					}
+			/*
+			 * CREATE TABLE AS is similar as SELECT INTO,
+			 * so avoid going further in this last case.
+			 */
+			if (stmt->is_select_into)
+				break;
 
-					case 3:
-					{
-						relationSchemaNameValue = lsecond(relationNameList);
-						relationNameValue = lthird(relationNameList);
-						break;
-					}
+			/* do not proceed OBJECT_MATVIEW */
+			if (STMT_OBJTYPE(stmt) != OBJECT_TABLE)
+				break;
 
-					default:
-					{
-						ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-										errmsg("improper relation name: \"%s\"",
-											   NameListToString(relationNameList))));
-						break;
-					}
-				}
+			/*
+			 * Be sure to have CREATE TEMPORARY TABLE definition
+			 */
+			if (stmt->into->rel->relpersistence != RELPERSISTENCE_TEMP)
+				break;
 
-				/* prefix with schema name if it is not added already */
-				if (relationSchemaNameValue == NULL)
-				{
-#if PG_VERSION_NUM < 150000
-					Value *schemaNameValue = makeString(pstrdup(PGTT_NSPNAME));
-#else
-					String *schemaNameValue = makeString(pstrdup(PGTT_NSPNAME));
-#endif
-					relationNameList = lcons(schemaNameValue, relationNameList);
-				}
+			/*
+			 * We only take care here of statements with the GLOBAL keyword
+			 * even if it is deprecated and generate a warning.
+			 */
+			regexec_result = RE_compile_and_execute(
+					cstring_to_text(CREATE_GLOBAL_REGEXP),
+					VARDATA_ANY(cstring_to_text((char *) queryString)),
+					VARSIZE_ANY_EXHDR(cstring_to_text((char *) queryString)),
+					REG_ADVANCED | REG_ICASE | REG_NEWLINE,
+					DEFAULT_COLLATION_OID,
+					0, NULL);
 
-				if (strpos(
-#if PG_VERSION_NUM < 150000
-				asc_toupper(relationNameValue->val.str,  strlen(relationNameValue->val.str)),
-#else
-				asc_toupper(relationNameValue->sval,  strlen(relationNameValue->sval)),
-#endif
-						       	asc_toupper("pgtt_", 5), 0) == 0)
-					break;
+			if (!regexec_result)
+				break;
 
-	elog(DEBUG1, "GTT DEBUG: looking for drop of tablename: %s",
-#if PG_VERSION_NUM < 150000
-			relationNameValue->val.str
-#else
-			relationNameValue->sval
-#endif
-	    );
+			/*
+			 * What to do at commit time for global temporary relations
+			 * default is ON COMMIT PRESERVE ROWS (do nothing)
+			 */
+			if (stmt->into->onCommit == ONCOMMIT_DELETE_ROWS)
+				preserved = false;
 
-				/* Truncate relname to appropriate length */
-				strncpy(tbname, psprintf("pgtt_%s",
-#if PG_VERSION_NUM < 150000
-							relationNameValue->val.str
-#else
-							relationNameValue->sval
-#endif
-							), NAMEDATALEN);
 
-				/*
-				 * Look if we have a GTT table called pgtt_||name
-				 * otherwise we have nothing more to do here.
-				 */
-				mainTableOid = search_relation(tbname);
-elog(DEBUG1, "GTT DEBUG: mainTableOid = %d - tablename: %s", mainTableOid, tbname);
+			/*
+			 * Case of ON COMMIT DROP and GLOBAL TEMPORARY might not be
+			 * allowed, this is the same as using a normal temporary table
+			 * inside a transaction. Here the table should be dropped after
+			 * commit so it will not survive a transaction.
+			 * Throw an error to prevent the use of this clause.
+			 */
+			if (stmt->into->onCommit == ONCOMMIT_DROP)
+				ereport(ERROR,
+						(errmsg("use of ON COMMIT DROP with GLOBAL TEMPORARY is not allowed"),
+						 errhint("Create a local temporary table inside a transaction instead, this is the default behavior.")));
 
-				if (mainTableOid > 0)
-				{
+			elog(DEBUG1, "Create table %s, rows persistance: %d, GLOBAL at position: %d",
+						name, preserved,
+						strpos(asc_toupper(queryString, strlen(queryString)), "GLOBAL", 0));
 
-					/* 
-					 * FIXME: we do not allow multiple target in drop statement
-					 * for GTT. See gtt_drop_table_statement() on how to build
-					 * the new list of object.
-					 */
-					/*
-					if (list_length(((DropStmt *)parsetree)->objects) != 1)
-						ereport(ERROR, (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-									errmsg("drop of Global Temporary Table do not support multiple target"),
-									errhint("use individual drop statements.")));
-					*/
+			/* Create the Global Temporary Table with all associated object */
+			gtt_override_create_table_as(GTT_PROCESSUTILITY_ARGS);
 
-					/*
-					 * Looking if there is a corresponding global temporary table
-					 * and in this case perform a "DROP TABLE pgtt_... CASCADE" instead.
-					 */
-					gtt_drop_table_statement(mainTableOid, psprintf("%s.%s", PGTT_NSPNAME, tbname));
-
-					/*
-					 * Unregister the Global Temporary Table and its link to the
-					 * view stored in pgtt_global_temp table
-					 */
-					gtt_unregister_global_temporary_table(mainTableOid, tbname);
-
-					/* reports that the work is already done */
-					work_done = true;
-					break;
-				}
-				else
-				{
-					/* 
-					 * FIXME: See RemoveRelations(DropStmt *drop);
-					 * src/backend/commands/tablecmds.c line 1070
-					 */
-				}
-			}
+			work_done = true;
 			break;
 		}
+
+		case T_DropStmt:
+		{
+			/*
+			 * we don't do nothing here, it is too late to detect
+			 * that the table to be dropped have been changed into
+			 * a view. This is done at parse analysis level.
+			 */
+			break;
+		}
+
 		default:
 			break;
 	}
@@ -488,8 +541,7 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 	bool    need_priv_escalation = !superuser(); /* we might be a SU */
 	Oid     save_userid;
 	int     save_sec_context;
-	char    tbname[NAMEDATALEN];
-	int     pos;
+	int     pos, end;
 	char    *newQueryString = NULL;
 	bool	preserved = true;
 	ListCell   *elements;
@@ -540,98 +592,34 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 	/*
 	 * What to do at commit time for global temporary relations
 	 * default is ON COMMIT PRESERVE ROWS (do nothing)
-	 * FIXME: at this time it is not possible to used ON COMMIT
-	 * syntax on non temporary table, it throw an error.
 	 */
 	if (stmt->oncommit == ONCOMMIT_DELETE_ROWS) 
 		preserved = false;
-
-	/* stmt->oncommit = ONCOMMIT_NOOP */
+	stmt->oncommit = ONCOMMIT_NOOP;
 
 	/* Connect to the current database */
 	connected = SPI_connect();
 	if (connected != SPI_OK_CONNECT)
-	{
 		ereport(ERROR, (errmsg("could not connect to SPI manager")));
-	}
-
-	/* Change relation name and truncate relname to appropriate length */
-	strncpy(tbname, psprintf("pgtt_%s", stmt->relation->relname), NAMEDATALEN);
 
 	/* Set DDL to create the unlogged table */
 	pos = strpos(asc_toupper(queryString, strlen(queryString)), asc_toupper(stmt->relation->relname, strlen(stmt->relation->relname)), 0) + strlen(stmt->relation->relname);
-	newQueryString = psprintf("CREATE UNLOGGED TABLE pgtt_schema.%s %s", tbname, queryString+pos);
+	newQueryString = psprintf("CREATE UNLOGGED TABLE pgtt_schema.%s %s", stmt->relation->relname, queryString+pos);
+	end = strpos(asc_toupper(newQueryString, strlen(newQueryString)), asc_toupper("ON COMMIT", 9), 0);
+	if (end > 0)
+		newQueryString[end-1] = '\0';
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
 
 	/* Add pgtt_sessid column */
-	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s ADD COLUMN pgtt_sessid lsid DEFAULT get_session_id()", tbname);
-        result = SPI_exec(newQueryString, 0);
-        if (result < 0)
-                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
-
-	/* Create an index on pgtt_sessid column */
-	newQueryString = psprintf("CREATE INDEX ON pgtt_schema.%s (pgtt_sessid)", tbname);
-        result = SPI_exec(newQueryString, 0);
-        if (result < 0)
-                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
-
-	/* Allow all on the global temporary table except truncate and drop to everyone */
-	newQueryString = psprintf("GRANT SELECT,INSERT,UPDATE,DELETE ON pgtt_schema.%s TO PUBLIC", tbname);
-        result = SPI_exec(newQueryString, 0);
-        if (result < 0)
-                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
-
-	/* Activate RLS to set policy based on session */
-	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s ENABLE ROW LEVEL SECURITY", tbname);
-        result = SPI_exec(newQueryString, 0);
-        if (result < 0)
-                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
-
-	if (preserved)
-		/*
-		 * Create the policy that must be applied on the table
-		 * to show only rows where pgtt_sessid is the same as
-		 * current pid.
-		 */
-		newQueryString = psprintf("CREATE POLICY pgtt_rls_session ON pgtt_schema.%s USING (pgtt_sessid = get_session_id()) WITH CHECK (true)", tbname);
-	else
-		/*
-		 * Create the policy that must be applied on the table
-		 * to show only rows where pgtt_sessid is the same as
-		 * current pid and rows that have been created in the
-		 * current transaction.
-		 */
-		newQueryString = psprintf("CREATE POLICY pgtt_rls_transaction ON pgtt_schema.%s USING (pgtt_sessid = get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)", tbname);
-
-        result = SPI_exec(newQueryString, 0);
-        if (result < 0)
-                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
-
-	/* Force policy to be active for the owner of the table */
-	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s FORCE ROW LEVEL SECURITY", tbname);
-        result = SPI_exec(newQueryString, 0);
-        if (result < 0)
-                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
-
-	/* Create the view */
-	if (preserved)
-		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=get_session_id()", stmt->relation->relname, colnames, tbname);
-	else
-		newQueryString = psprintf("CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.%s WHERE pgtt_sessid=get_session_id() AND xmin::text = txid_current()::text", stmt->relation->relname, colnames, tbname);
-        result = SPI_exec(newQueryString, 0);
-        if (result < 0)
-                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
-	
-	/* Set owner of the view to current user, not the function definer (superuser)*/
-	newQueryString = psprintf("ALTER VIEW %s OWNER TO %s", stmt->relation->relname, GetUserNameFromId(GetSessionUserId(), false));
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s ADD COLUMN pgtt_sessid lsid DEFAULT get_session_id()", stmt->relation->relname);
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
 
 	/* Get OID of the GTT table */
-	newQueryString = psprintf("SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = '%s' AND n.nspname = 'pgtt_schema'", tbname);
+	newQueryString = psprintf("SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = '%s' AND n.nspname = 'pgtt_schema'", stmt->relation->relname);
         result = SPI_exec(newQueryString, 0);
         if (result != SPI_OK_SELECT)
 
@@ -645,8 +633,73 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 	if (isnull)
                 ereport(ERROR, (errmsg("query must not return NULL: \"%s\"", newQueryString)));
 
+	/* Rename the table with its oid */
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s RENAME TO pgtt_%d", stmt->relation->relname, oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Create an index on pgtt_sessid column */
+	newQueryString = psprintf("CREATE INDEX ON pgtt_schema.pgtt_%d (pgtt_sessid)", oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Allow all on the global temporary table except truncate and drop to everyone */
+	newQueryString = psprintf("GRANT SELECT,INSERT,UPDATE,DELETE ON pgtt_schema.pgtt_%d TO PUBLIC", oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Activate RLS to set policy based on session */
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.pgtt_%d ENABLE ROW LEVEL SECURITY", oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	if (preserved)
+		/*
+		 * Create the policy that must be applied on the table
+		 * to show only rows where pgtt_sessid is the same as
+		 * current pid.
+		 */
+		newQueryString = psprintf("CREATE POLICY pgtt_rls_session ON pgtt_schema.pgtt_%d USING (pgtt_sessid = get_session_id()) WITH CHECK (true)", oidRel);
+	else
+		/*
+		 * Create the policy that must be applied on the table
+		 * to show only rows where pgtt_sessid is the same as
+		 * current pid and rows that have been created in the
+		 * current transaction.
+		 */
+		newQueryString = psprintf("CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%d USING (pgtt_sessid = get_session_id() AND xmin::text >= txid_current()::text) WITH CHECK (true)", oidRel);
+
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Force policy to be active for the owner of the table */
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.pgtt_%d FORCE ROW LEVEL SECURITY", oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Create the view */
+	if (preserved)
+		newQueryString = psprintf("CREATE VIEW %s%s%s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%d WHERE pgtt_sessid=get_session_id()", (stmt->relation->schemaname) ? stmt->relation->schemaname : "", (stmt->relation->schemaname) ? "." : "", stmt->relation->relname, colnames, oidRel);
+	else
+		newQueryString = psprintf("CREATE VIEW %s%s%s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%d WHERE pgtt_sessid=get_session_id() AND xmin::text >= txid_current()::text", (stmt->relation->schemaname) ? stmt->relation->schemaname : "", (stmt->relation->schemaname) ? "." : "", stmt->relation->relname, colnames, oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+	
+	/* Set owner of the view to current user, not the function definer (superuser)*/
+	newQueryString = psprintf("ALTER VIEW %s%s%s OWNER TO %s", (stmt->relation->schemaname) ? stmt->relation->schemaname : "", (stmt->relation->schemaname) ? "." : "", stmt->relation->relname, GetUserNameFromId(GetSessionUserId(), false));
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
 	/* Get OID of the corresponding view */
-	newQueryString = psprintf("SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = '%s' AND n.nspname = current_schema", stmt->relation->relname);
+	newQueryString = psprintf("SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = '%s' AND n.nspname = %s", stmt->relation->relname, (stmt->relation->schemaname) ? quote_literal_cstr(stmt->relation->schemaname) : "current_schema()");
         result = SPI_exec(newQueryString, 0);
         if (result != SPI_OK_SELECT)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
@@ -674,26 +727,37 @@ gtt_override_create_table(GTT_PROCESSUTILITY_PROTO)
 	/* Restore user's privileges */
 	if (need_priv_escalation)
 		SetUserIdAndSecContext(save_userid, save_sec_context);
-
 }
 
-/*
- * Drop the Global Temporary Table with all associated objects
- * by replacing the DROP TABLE into a DROP TABLE statement with
- * CASCADE of the table prefixed with pgtt_.
- *
- * src/include/nodes/parsenodes.h : 2579
- */
 static void
-gtt_drop_table_statement(Oid relid, const char *relname)
+gtt_override_create_table_as(GTT_PROCESSUTILITY_PROTO)
 {
 	bool    need_priv_escalation = !superuser(); /* we might be a SU */
 	Oid     save_userid;
 	int     save_sec_context;
+	int     pos;
 	char    *newQueryString = NULL;
-	int     connected = 0;
-	int     finished = 0;
-	int     result = 0;
+	bool	preserved = true;
+	char       *colnames = NULL;
+	int connected = 0;
+	int finished = 0;
+	int result = 0;
+	Oid     oidRel;
+	Oid     oidView;
+        bool    isnull;
+	Datum   final_sql;
+#if PG_VERSION_NUM >= 100000
+	Node       *parsetree = pstmt->utilityStmt;
+#endif
+	/*The CREATE TABLE AS statement */
+	CreateTableAsStmt *stmt = (CreateTableAsStmt *)parsetree;
+
+	/* replace temporary state from the table to unlogged table */
+	stmt->into->rel->relpersistence = RELPERSISTENCE_UNLOGGED;
+	/* Do not copy data in the unlogged table */
+	stmt->into->skipData = true;
+
+	elog(DEBUG1, "GTT DEBUG: Execute CREATE TABLE AS + RLS + VIEW grant");
 
 	/* The Global Temporary Table objects must be created as SU */
 	if (need_priv_escalation)
@@ -706,21 +770,153 @@ gtt_drop_table_statement(Oid relid, const char *relname)
 							| SECURITY_RESTRICTED_OPERATION);
 	}
 
+	/*
+	 * What to do at commit time for global temporary relations
+	 * default is ON COMMIT PRESERVE ROWS (do nothing)
+	 */
+	if (stmt->into->onCommit == ONCOMMIT_DELETE_ROWS) 
+		preserved = false;
+	stmt->into->onCommit = ONCOMMIT_NOOP;
+
+	/* Connect to the current database */
 	connected = SPI_connect();
 	if (connected != SPI_OK_CONNECT)
 	{
 		ereport(ERROR, (errmsg("could not connect to SPI manager")));
 	}
 
-	/* Perform a drop cascade of the GTT table this will remove the associated view */
-	newQueryString = psprintf("DROP TABLE %s CASCADE", relname);
-	elog(DEBUG1, "GTT DEBUG: Executing DROP TABLE %s CASCADE; (Oid %d)", relname, relid);
+	/* Set DDL to create the unlogged table */
+	final_sql = CStringGetTextDatum(queryString);
+	final_sql = DirectFunctionCall4Coll(textregexreplace,
+								C_COLLATION_OID,
+								final_sql,
+								CStringGetTextDatum("ON COMMIT.*ROWS AS "),
+								CStringGetTextDatum("AS "),
+								CStringGetTextDatum("i"));
+	newQueryString = TextDatumGetCString(final_sql);
+
+	pos = strpos(asc_toupper(newQueryString, strlen(newQueryString)), asc_toupper(stmt->into->rel->relname, strlen(stmt->into->rel->relname)), 0) + strlen(stmt->into->rel->relname);
+	newQueryString = psprintf("CREATE UNLOGGED TABLE pgtt_schema.%s %s", stmt->into->rel->relname, newQueryString+pos);
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
 
-	/* Now unregister the GTT table */
-	newQueryString = psprintf("DELETE FROM pgtt_schema.pgtt_global_temp WHERE relid = %d", relid);
+	/* Add pgtt_sessid column */
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s ADD COLUMN pgtt_sessid lsid DEFAULT get_session_id()", stmt->into->rel->relname);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Get OID of the GTT table */
+	newQueryString = psprintf("SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = '%s' AND n.nspname = 'pgtt_schema'", stmt->into->rel->relname);
+        result = SPI_exec(newQueryString, 0);
+        if (result != SPI_OK_SELECT)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+        if (SPI_processed != 1)
+                ereport(ERROR, (errmsg("query must return a single Oid: \"%s\"", newQueryString)));
+
+        oidRel = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
+								   SPI_tuptable->tupdesc,
+								   1, &isnull));
+	if (isnull)
+                ereport(ERROR, (errmsg("query must not return NULL: \"%s\"", newQueryString)));
+
+	/* Get column list of the newly created table */
+	newQueryString = psprintf("SELECT string_agg(attname, ',') FROM pg_attribute WHERE attrelid = %d AND attnum > 0 AND attname != 'pgtt_sessid'",
+			oidRel);
+
+	result = SPI_exec(newQueryString, 0);
+	if (result != SPI_OK_SELECT && SPI_processed != 1)
+		ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	colnames = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+	if (colnames == NULL)
+                ereport(ERROR, (errmsg("no column returned using query: \"%s\"", newQueryString)));
+
+	/* Rename the table with its oid */
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.%s RENAME TO pgtt_%d", stmt->into->rel->relname, oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Create an index on pgtt_sessid column */
+	newQueryString = psprintf("CREATE INDEX ON pgtt_schema.pgtt_%d (pgtt_sessid)", oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Allow all on the global temporary table except truncate and drop to everyone */
+	newQueryString = psprintf("GRANT SELECT,INSERT,UPDATE,DELETE ON pgtt_schema.pgtt_%d TO PUBLIC", oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Activate RLS to set policy based on session */
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.pgtt_%d ENABLE ROW LEVEL SECURITY", oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	if (preserved)
+		/*
+		 * Create the policy that must be applied on the table
+		 * to show only rows where pgtt_sessid is the same as
+		 * current pid.
+		 */
+		newQueryString = psprintf("CREATE POLICY pgtt_rls_session ON pgtt_schema.pgtt_%d USING (pgtt_sessid = get_session_id()) WITH CHECK (true)", oidRel);
+	else
+		/*
+		 * Create the policy that must be applied on the table
+		 * to show only rows where pgtt_sessid is the same as
+		 * current pid and rows that have been created in the
+		 * current transaction.
+		 */
+		newQueryString = psprintf("CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%d USING (pgtt_sessid = get_session_id() AND xmin::text >= txid_current()::text) WITH CHECK (true)", oidRel);
+
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Force policy to be active for the owner of the table */
+	newQueryString = psprintf("ALTER TABLE pgtt_schema.pgtt_%d FORCE ROW LEVEL SECURITY", oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Create the view */
+	if (preserved)
+		newQueryString = psprintf("CREATE VIEW %s%s%s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%d WHERE pgtt_sessid=get_session_id()", (stmt->into->rel->schemaname) ? stmt->into->rel->schemaname : "", (stmt->into->rel->schemaname) ? "." : "", stmt->into->rel->relname, colnames, oidRel);
+	else
+		newQueryString = psprintf("CREATE VIEW %s%s%s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%d WHERE pgtt_sessid=get_session_id() AND xmin::text >= txid_current()::text", (stmt->into->rel->schemaname) ? stmt->into->rel->schemaname : "", (stmt->into->rel->schemaname) ? "." : "", stmt->into->rel->relname, colnames, oidRel);
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	pfree(colnames);
+
+	/* Set owner of the view to current user, not the function definer (superuser)*/
+	newQueryString = psprintf("ALTER VIEW %s%s%s OWNER TO %s", (stmt->into->rel->schemaname) ? stmt->into->rel->schemaname : "", (stmt->into->rel->schemaname) ? "." : "", stmt->into->rel->relname, GetUserNameFromId(GetSessionUserId(), false));
+        result = SPI_exec(newQueryString, 0);
+        if (result < 0)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+
+	/* Get OID of the corresponding view */
+	newQueryString = psprintf("SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = '%s' AND n.nspname = %s", stmt->into->rel->relname, (stmt->into->rel->schemaname) ? quote_literal_cstr(stmt->into->rel->schemaname) : "current_schema()");
+        result = SPI_exec(newQueryString, 0);
+        if (result != SPI_OK_SELECT)
+                ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
+        if (SPI_processed != 1)
+                ereport(ERROR, (errmsg("query must return a single Oid: \"%s\"", newQueryString)));
+
+        oidView = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
+								   SPI_tuptable->tupdesc,
+								   1, &isnull));
+	if (isnull)
+                ereport(ERROR, (errmsg("query must not return NULL: \"%s\"", newQueryString)));
+
+	/* Register the link between the view and the unlogged table */
+	newQueryString = psprintf("INSERT INTO pgtt_schema.pgtt_global_temp (relid, viewid, datcrea, preserved) VALUES (%d, %d, now(), '%d')", oidRel, oidView, preserved);
         result = SPI_exec(newQueryString, 0);
         if (result < 0)
                 ereport(ERROR, (errmsg("execution failure on query: \"%s\"", newQueryString)));
@@ -734,96 +930,8 @@ gtt_drop_table_statement(Oid relid, const char *relname)
 	/* Restore user's privileges */
 	if (need_priv_escalation)
 		SetUserIdAndSecContext(save_userid, save_sec_context);
-
 }
 
-static int
-search_relation(char *relname)
-{
-	ScanKeyData   key[2];
-	SysScanDesc   scan;
-	Relation      pg_class_rel;
-	HeapTuple     tuple;
-	int           foundOid = 0;
-	Oid           schemaOid;
-
-	/* Get Oid of the Global Temporary Tables */
-	schemaOid = get_namespace_oid(PGTT_NSPNAME, false);
-
-	elog(DEBUG1, "GTT DEBUG: Found oid for schema %s, oid %d", PGTT_NSPNAME, schemaOid);
-
-	/* Define scanning */
-	ScanKeyInit(&key[0], Anum_pg_class_relname, BTEqualStrategyNumber, F_NAMEEQ, CStringGetDatum(relname));
-	ScanKeyInit(&key[1], Anum_pg_class_relnamespace, BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(schemaOid));
-	/* Open catalog's relations */
-#if (PG_VERSION_NUM >= 120000)
-	pg_class_rel = table_open(RelationRelationId, RowExclusiveLock);
-#else
-	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
-#endif
-	/* Start search of relation */
-	scan = systable_beginscan(pg_class_rel, ClassNameNspIndexId, true, NULL, lengthof(key), key);
-	if (HeapTupleIsValid(tuple = systable_getnext(scan)))
-	{
-#if (PG_VERSION_NUM >= 120000)
-		foundOid = ((Form_pg_class) GETSTRUCT(tuple))->oid;
-#else
-		foundOid = HeapTupleGetOid(tuple);
-#endif
-	}
-	/* Cleanup. */
-	systable_endscan(scan);
-#if (PG_VERSION_NUM >= 120000)
-	table_close(pg_class_rel, RowExclusiveLock);
-#else
-	heap_close(pg_class_rel, RowExclusiveLock);
-#endif
-
-	if (foundOid > 0)
-		elog(DEBUG1, "GTT DEBUG: Found oid for relation %s from pg_class, oid %d", relname, foundOid);
-
-	return foundOid;
-}
-
-/*
- * Unregister a Global Temporary Table and its link to the
- * view stored in pgtt_global_temp table.
- */
-static void
-gtt_unregister_global_temporary_table(Oid relid, const char *relname)
-{
-	RangeVar     *rv;
-	Relation      rel;
-	ScanKeyData   key[1];
-	SysScanDesc   scan;
-	HeapTuple     tuple;
-
-	elog(DEBUG1, "GTT DEBUG: removing tuple with relid = %d (relname: %s)", relid, relname);
-
-	/* Set and open the GTT relation */
-	rv = makeRangeVar(PGTT_NSPNAME, CATALOG_GLOBAL_TEMP_REL, -1);
-#if (PG_VERSION_NUM >= 120000)
-	rel = table_openrv(rv, RowExclusiveLock);
-#else
-	rel = heap_openrv(rv, RowExclusiveLock);
-#endif
-	/* Define scanning */
-	ScanKeyInit(&key[0], Anum_pgtt_relid, BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(relid));
-
-	/* Start search of relation */
-	scan = systable_beginscan(rel, 0, true, NULL, 1, key);
-	/* Remove the tuples. */
-	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-				simple_heap_delete(rel, &tuple->t_self);
-	/* Cleanup. */
-	systable_endscan(scan);
-#if (PG_VERSION_NUM >= 120000)
-	table_close(rel, RowExclusiveLock);
-#else
-	heap_close(rel, RowExclusiveLock);
-#endif
-
-}
 
 /*
  * Function used to generate a local session id composed
@@ -1032,5 +1140,124 @@ lsid_cmp(PG_FUNCTION_ARGS)
         Lsid    *b = (Lsid *) PG_GETARG_POINTER(1);
 
         PG_RETURN_INT32(lsid_cmp_internal(a, b));
+}
+
+/*
+ * Post-parse-analysis hook: mark query with a queryId
+ */
+static void
+#if PG_VERSION_NUM >= 140000
+gtt_post_parse_analyze(ParseState *pstate, Query *query, struct JumbleState * jstate)
+#else
+gtt_post_parse_analyze(ParseState *pstate, Query *query)
+#endif
+{
+	if (query->commandType == CMD_UTILITY && IsA(query->utilityStmt, DropStmt))
+	{
+		DropStmt   *drop = (DropStmt *) query->utilityStmt;
+
+		/*
+		 * When a DROP TABLE is issued we verify if this is a GTT.
+		 * If this is the case we change the object type to not have
+		 * error on not using the right object keyword in the statement.
+		 */
+		if (drop->removeType == OBJECT_TABLE)
+		{
+			ObjectAddresses *objects;
+			ListCell        *cell;
+			int             nb_rel = 0;
+			LOCKMODE        lockmode = AccessExclusiveLock;
+
+			/* Lock and validate each relation; build a list of object addresses */
+			objects = new_object_addresses();
+			/*
+			 * we are there just for relation because of the DROP TABLE
+			 * but we want to search if it is a view instead created by
+			 * our GTT extension. If this is really a table we will have
+			 * an invalid oid.
+			 */
+			foreach(cell, drop->objects)
+			{
+				RangeVar   *rel = makeRangeVarFromNameList((List *) lfirst(cell));
+				Oid                     relOid;
+				struct DropRelationCallbackState state;
+
+				AcceptInvalidationMessages();
+
+				nb_rel++;
+
+				/* Look up the appropriate relation using namespace search. */
+				state.expected_relkind = RELKIND_RELATION;
+				state.heap_lockmode = AccessShareLock;
+				/* We must initialize these fields to show that no locks are held: */
+				state.heapOid = InvalidOid;
+				state.partParentOid = InvalidOid;
+
+				relOid = RangeVarGetRelidExtended(rel, lockmode, RVR_MISSING_OK | RVR_SKIP_LOCKED,
+								  RangeVarCallbackForDropRelation,
+								  (void *) &state);
+
+				/* Not a GTT? */
+				if (!is_gtt_registered(relOid)) 
+					continue;
+
+				/* change the object type as we have create a view for this table */
+				drop->removeType = OBJECT_VIEW;
+			}
+			/* We don't allow multiple relation drop with GTT, we will have an error */
+			if (nb_rel > 1)
+				drop->removeType = OBJECT_TABLE;
+
+			free_object_addresses(objects);
+		}
+	}
+
+	/* restore hook */
+	if (prev_post_parse_analyze_hook) {
+#if PG_VERSION_NUM >= 140000
+		prev_post_parse_analyze_hook(pstate, query, jstate);
+#else
+		prev_post_parse_analyze_hook(pstate, query);
+#endif
+	}
+}
+
+static bool
+is_gtt_registered(Oid relid)
+{
+	RangeVar     *rv;
+	Relation      rel;
+	ScanKeyData   key[1];
+	SysScanDesc   scan;
+	HeapTuple     tuple;
+	bool          is_gtt = false;
+
+	elog(DEBUG1, "Looking for registered GTT relid = %d", relid);
+
+	/* Set and open the GTT relation */
+	rv = makeRangeVar(PGTT_NAMESPACE_NAME, CATALOG_GLOBAL_TEMP_REL, -1);
+#if (PG_VERSION_NUM >= 120000)
+	rel = table_openrv(rv, RowExclusiveLock);
+#else
+	rel = heap_openrv(rv, RowExclusiveLock);
+#endif
+	/* Define scanning */
+	ScanKeyInit(&key[0], Anum_pgtt_viewid, BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(relid));
+
+	/* Start search of relation */
+	scan = systable_beginscan(rel, 0, true, NULL, 1, key);
+
+	/* we found it in the GTT table */
+	if (HeapTupleIsValid(tuple = systable_getnext(scan)))
+		is_gtt = true;
+
+	/* Cleanup. */
+	systable_endscan(scan);
+#if (PG_VERSION_NUM >= 120000)
+	table_close(rel, RowExclusiveLock);
+#else
+	heap_close(rel, RowExclusiveLock);
+#endif
+	return is_gtt;
 }
 
