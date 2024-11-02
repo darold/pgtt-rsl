@@ -40,7 +40,8 @@ DECLARE
 	v_relid oid;
 	ret bigint;
 BEGIN
-	EXECUTE format('SELECT relid FROM pgtt_schema.pgtt_global_temp WHERE relname=%L AND relnspname=%L', tbname, nspname) INTO v_relid;
+        EXECUTE format('SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = %L AND n.nspname = %L', tbname, nspname) INTO v_relid;
+	EXECUTE format('SELECT relid FROM pgtt_schema.pgtt_global_temp WHERE viewid=%s', v_relid) INTO v_relid;
 	EXECUTE 'SELECT count(*) FROM pgtt_schema.pgtt_'||v_relid INTO ret;
 	RETURN ret;
 END
@@ -148,7 +149,8 @@ DO $$
 DECLARE
 	v_relid oid;
 BEGIN
-	SELECT relid INTO v_relid FROM pgtt_schema.pgtt_global_temp WHERE relname='t_glob_temptable1' AND relnspname='public';
+        SELECT c.oid INTO v_relid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = 't_glob_temptable1' AND n.nspname = 'public';
+	EXECUTE format('SELECT relid FROM pgtt_schema.pgtt_global_temp WHERE viewid=%s', v_relid) INTO v_relid;
 	EXECUTE 'UPDATE pgtt_schema.pgtt_'||v_relid||' SET id=id+1';
 END
 $$;
