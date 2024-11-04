@@ -32,7 +32,7 @@ GRANT ALL ON t_glob_temptable2 TO test_gtt1,test_gtt2;
 
 CREATE SCHEMA foo;
 GRANT ALL ON SCHEMA foo TO test_gtt1,test_gtt2;
-SELECT pgtt_schema.pgtt_create_table('t_glob_temptable1', 'id integer, lbl text', false, 'foo');
+SELECT pgtt_schema.pgtt_create_table('t_glob_temptable1', 'id integer, lbl text', true, 'foo');
 GRANT ALL ON foo.t_glob_temptable1 TO test_gtt1,test_gtt2;
 
 CREATE FUNCTION check_pgtt_count (tbname name, nspname name DEFAULT 'public') RETURNS bigint AS $$
