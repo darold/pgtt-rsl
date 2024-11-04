@@ -2,7 +2,7 @@ EXTENSION  = pgtt_rsl
 EXTVERSION = $(shell grep default_version $(EXTENSION).control | \
 	       sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
 
-PGFILEDESC = "pgtt_rsl - Global Temporary Tables for PostgreSQL"
+PGFILEDESC = "pgtt_rsl - Global Temporary Tables for PostgreSQL with Row Security Level"
 
 PG_CONFIG = pg_config
 

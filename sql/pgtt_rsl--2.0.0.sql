@@ -88,20 +88,17 @@ SET LOCAL search_path TO pgtt_schema,pg_catalog;
 
 ----
 -- Table for meta information about Global Temporary Table.
---     - relid   : oid of the GTT table
---     - relname : name of the GTT table
---     - viewid  : oid of the corresponding view acceeded by the users
---     - viewname: name of the view pointing to the GTT
---     - datcrea : creation date of the GTT relation
+--     - relid    : oid of the GTT table
+--     - viewid   : oid of the corresponding view acceeded by the users
+--     - datcrea  : creation date of the GTT relation
+--     - preserved: use ON COMMIT PRESERVE ROWS
 ----
 CREATE TABLE pgtt_schema.pgtt_global_temp (
-	relid oid NOT NULL,
-	viewid oid NOT NULL,
+	relid oid UNIQUE NOT NULL,
+	viewid oid UNIQUE NOT NULL,
 	datcrea timestamp NOT NULL,
 	preserved boolean,
-	relname name,
-	relnspname name,
-	UNIQUE (relid, viewid)
+	PRIMARY KEY (relid, viewid)
 );
 GRANT SELECT ON pgtt_schema.pgtt_global_temp TO PUBLIC;
 
@@ -180,7 +177,7 @@ BEGIN
 		-- to show only rows where pgtt_sessid is the same as
 		-- current pid and rows that have been created in the
 		-- current transaction.
-		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)', relid);
+		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = get_session_id() AND xmin::text >= txid_current()::text) WITH CHECK (true)', relid);
 	END IF;
 	-- Force policy to be active for the owner of the table
 	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s FORCE ROW LEVEL SECURITY', relid);
@@ -196,20 +193,20 @@ BEGIN
 	IF preserved THEN
 		EXECUTE format('CREATE VIEW %I.%I WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id()', relnspname, tb_name, column_list, relid);
 	ELSE
-		EXECUTE format('CREATE VIEW %I.%I WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id() AND xmin::text = txid_current()::text', relnspname, tb_name, column_list, relid);
+		EXECUTE format('CREATE VIEW %I.%I WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id() AND xmin::text >= txid_current()::text', relnspname, tb_name, column_list, relid);
 	END IF;
 
-	-- Set owner of the view to current user, not the function definer (superuser)
-	EXECUTE format('ALTER VIEW %I.%I OWNER TO %s', relnspname, tb_name, current_user);
+	-- Set owner of the view to session user, not the function definer (superuser)
+	EXECUTE format('ALTER VIEW %I.%I OWNER TO %s', relnspname, tb_name, session_user);
 
 	-- Allow read+write to every one on this view - disable here because the
 	-- owner is responsible of setting privilege on this view
 	-- EXECUTE format('GRANT SELECT,INSERT,UPDATE,DELETE ON %s TO PUBLIC', tb_name);
 
 	-- Register the link between the view and the unlogged table
-	EXECUTE format('INSERT INTO pgtt_schema.pgtt_global_temp (relid, viewid, datcrea, preserved, relname, relnspname) VALUES (%s, %s, now(), %L, %L, %L)',
+	EXECUTE format('INSERT INTO pgtt_schema.pgtt_global_temp (relid, viewid, datcrea, preserved) VALUES (%s, %s, now(), %L)',
 		(SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = 'pgtt_'||relid AND n.nspname = 'pgtt_schema'),
-		(SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = tb_name AND n.nspname = relnspname), preserved, tb_name, relnspname);
+		(SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = tb_name AND n.nspname = relnspname), preserved);
 
 	RETURN true;
 END;
@@ -234,12 +231,12 @@ AS $$
 DECLARE
 	relid oid;
 BEGIN
-        -- Unregister the table/view relation from pgtt_schema.pgtt_global_temp table.
-        EXECUTE format('DELETE FROM pgtt_schema.pgtt_global_temp WHERE relname=%L AND relnspname=%L RETURNING relid',
-                tb_name, nspname) INTO relid;
-
+	-- Get the view Oid
+        EXECUTE format('SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = %L AND n.nspname = %L', tb_name, nspname) INTO relid;
+        -- Unregister the table/view relation from pgtt_schema.pgtt_global_temp table and return the relation oid
+        EXECUTE format('DELETE FROM pgtt_schema.pgtt_global_temp WHERE viewid=%s RETURNING relid', relid) INTO relid;
 	-- Compute the query to remove the global temporary table and
-	-- related indexes, with CASCADE associated view will be removed.
+	-- related objects, with CASCADE associated view will be removed.
 	EXECUTE format('DROP TABLE IF EXISTS pgtt_schema.pgtt_%s CASCADE', relid);
 
 	RETURN true;
@@ -260,13 +257,14 @@ CREATE OR REPLACE FUNCTION pgtt_schema.pgtt_maintenance (iter integer DEFAULT 1,
 RETURNS bigint
 AS $$
 DECLARE
-	cur_gtt_tables CURSOR FOR SELECT relid,preserved FROM pgtt_schema.pgtt_global_temp;
+	cur_gtt_tables CURSOR FOR SELECT viewid,relid,preserved FROM pgtt_schema.pgtt_global_temp;
 	class_info RECORD;
 	query text;
 	rec RECORD;
 	nrows bigint;
 	total_nrows bigint;
 	alive integer;
+	relid oid;
 BEGIN
 	total_nrows := 0;
 
@@ -275,9 +273,18 @@ BEGIN
 	LOOP
 		FETCH NEXT FROM cur_gtt_tables INTO class_info;
 		EXIT WHEN NOT FOUND;
-		-- Check that the table have not been removed with a direct DROP
-		-- in this case regclass doesn't change oid to table name.
-		IF (class_info.relid::regclass::text = class_info.relid::text) THEN
+		-- Check if the table have been removed with a direct DROP+CASCADE
+		EXECUTE 'SELECT oid FROM pg_class WHERE oid=' || class_info.relid INTO relid;
+		IF relid IS NULL THEN
+			-- Cleanup all references to this table in our GTT registery table
+			EXECUTE 'DELETE FROM pgtt_schema.pgtt_global_temp WHERE relid=' || class_info.relid;
+			CONTINUE;
+		END IF;
+		-- Check if the view have been removed with a direct DROP
+		EXECUTE 'SELECT oid FROM pg_class WHERE oid=' || class_info.viewid INTO relid;
+		IF relid IS NULL THEN
+			-- Drop the table if it is not already the case
+			EXECUTE 'DROP TABLE pgtt_schema.pgtt_' || class_info.relid;
 			-- Cleanup all references to this table
 			EXECUTE 'DELETE FROM pgtt_schema.pgtt_global_temp WHERE relid=' || class_info.relid;
 			CONTINUE;

@@ -1,27 +1,27 @@
-psql:test/test_gtt2.sql:7: NOTICE:  database "gtt_testdb" does not exist, skipping
+psql:test/test_gtt2.sql:8: NOTICE:  database "gtt_testdb" does not exist, skipping
 DROP DATABASE
-psql:test/test_gtt2.sql:8: NOTICE:  role "test_gtt1" does not exist, skipping
+psql:test/test_gtt2.sql:9: NOTICE:  role "test_gtt1" does not exist, skipping
 DROP ROLE
-psql:test/test_gtt2.sql:9: NOTICE:  role "test_gtt2" does not exist, skipping
+psql:test/test_gtt2.sql:10: NOTICE:  role "test_gtt2" does not exist, skipping
 DROP ROLE
 CREATE ROLE
 CREATE ROLE
 CREATE DATABASE
 You are now connected to database "gtt_testdb" as user "gilles".
 CREATE EXTENSION
-psql:test/test_gtt2.sql:22: WARNING:  GLOBAL is deprecated in temporary table creation
+psql:test/test_gtt2.sql:23: WARNING:  GLOBAL is deprecated in temporary table creation
 LINE 1: CREATE GLOBAL TEMPORARY TABLE t_glob_temptable1 (id integer,...
                ^
 CREATE TABLE
 GRANT
-psql:test/test_gtt2.sql:26: WARNING:  GLOBAL is deprecated in temporary table creation
+psql:test/test_gtt2.sql:27: WARNING:  GLOBAL is deprecated in temporary table creation
 LINE 1: CREATE GLOBAL TEMPORARY TABLE t_glob_temptable2 ON COMMIT DE...
                ^
 CREATE TABLE AS
 GRANT
 CREATE SCHEMA
 GRANT
-psql:test/test_gtt2.sql:31: WARNING:  GLOBAL is deprecated in temporary table creation
+psql:test/test_gtt2.sql:32: WARNING:  GLOBAL is deprecated in temporary table creation
 LINE 1: CREATE GLOBAL TEMPORARY TABLE foo.t_glob_temptable1 (id inte...
                ^
 CREATE TABLE

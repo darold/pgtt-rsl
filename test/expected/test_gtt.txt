@@ -1,8 +1,8 @@
-psql:test/test_gtt.sql:7: NOTICE:  database "gtt_testdb" does not exist, skipping
+psql:test/test_gtt.sql:8: NOTICE:  database "gtt_testdb" does not exist, skipping
 DROP DATABASE
-psql:test/test_gtt.sql:8: NOTICE:  role "test_gtt1" does not exist, skipping
+psql:test/test_gtt.sql:9: NOTICE:  role "test_gtt1" does not exist, skipping
 DROP ROLE
-psql:test/test_gtt.sql:9: NOTICE:  role "test_gtt2" does not exist, skipping
+psql:test/test_gtt.sql:10: NOTICE:  role "test_gtt2" does not exist, skipping
 DROP ROLE
 CREATE ROLE
 CREATE ROLE
@@ -284,19 +284,19 @@ You are now connected to database "gtt_testdb" as user "postgres".
      0
 (1 row)
 
-psql:test/test_gtt.sql:254: NOTICE:  drop cascades to view t_glob_temptable1
+psql:test/test_gtt.sql:255: NOTICE:  drop cascades to view t_glob_temptable1
  pgtt_drop_table 
 -----------------
  t
 (1 row)
 
-psql:test/test_gtt.sql:257: NOTICE:  drop cascades to view t_glob_temptable2
+psql:test/test_gtt.sql:258: NOTICE:  drop cascades to view t_glob_temptable2
  pgtt_drop_table 
 -----------------
  t
 (1 row)
 
-psql:test/test_gtt.sql:260: NOTICE:  drop cascades to view foo.t_glob_temptable1
+psql:test/test_gtt.sql:261: NOTICE:  drop cascades to view foo.t_glob_temptable1
  pgtt_drop_table 
 -----------------
  t
