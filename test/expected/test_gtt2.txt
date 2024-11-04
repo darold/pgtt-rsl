@@ -1,0 +1,350 @@
+psql:test/test_gtt2.sql:7: NOTICE:  database "gtt_testdb" does not exist, skipping
+DROP DATABASE
+psql:test/test_gtt2.sql:8: NOTICE:  role "test_gtt1" does not exist, skipping
+DROP ROLE
+psql:test/test_gtt2.sql:9: NOTICE:  role "test_gtt2" does not exist, skipping
+DROP ROLE
+CREATE ROLE
+CREATE ROLE
+CREATE DATABASE
+You are now connected to database "gtt_testdb" as user "gilles".
+CREATE EXTENSION
+psql:test/test_gtt2.sql:22: WARNING:  GLOBAL is deprecated in temporary table creation
+LINE 1: CREATE GLOBAL TEMPORARY TABLE t_glob_temptable1 (id integer,...
+               ^
+CREATE TABLE
+GRANT
+psql:test/test_gtt2.sql:26: WARNING:  GLOBAL is deprecated in temporary table creation
+LINE 1: CREATE GLOBAL TEMPORARY TABLE t_glob_temptable2 ON COMMIT DE...
+               ^
+CREATE TABLE AS
+GRANT
+CREATE SCHEMA
+GRANT
+psql:test/test_gtt2.sql:31: WARNING:  GLOBAL is deprecated in temporary table creation
+LINE 1: CREATE GLOBAL TEMPORARY TABLE foo.t_glob_temptable1 (id inte...
+               ^
+CREATE TABLE
+GRANT
+CREATE FUNCTION
+GRANT
+You are now connected to database "gtt_testdb" as user "test_gtt1".
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+BEGIN
+INSERT 0 3
+SAVEPOINT
+ count 
+-------
+     3
+(1 row)
+
+COMMIT
+ count 
+-------
+     3
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt2".
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt1".
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "postgres".
+ count 
+-------
+     9
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt2".
+DELETE 0
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+DELETE 3
+ count 
+-------
+     0
+(1 row)
+
+INSERT 0 3
+UPDATE 3
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+DO
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "postgres".
+ count 
+-------
+    12
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt1".
+BEGIN
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+INSERT 0 3
+ count 
+-------
+     6
+(1 row)
+
+COMMIT
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt2".
+BEGIN
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+DELETE 3
+ count 
+-------
+     0
+(1 row)
+
+COMMIT
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "test_gtt2".
+BEGIN
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+UPDATE 3
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+ count 
+-------
+     1
+(1 row)
+
+COMMIT
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+BEGIN
+INSERT 0 3
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+ROLLBACK
+ count 
+-------
+     0
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+You are now connected to database "gtt_testdb" as user "postgres".
+ count 
+-------
+     9
+(1 row)
+
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE
+DROP TABLE
+DROP TABLE
+   generate_lsid    
+--------------------
+ {1527703231,11007}
+(1 row)
+
+ get_session_start_time 
+------------------------
+             1527703231
+(1 row)
+
+ get_session_pid 
+-----------------
+           11007
+(1 row)
+
+ ?column? 
+----------
+ f
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ f
+(1 row)
+
+ ?column? 
+----------
+ t
+(1 row)
+
+ ?column? 
+----------
+ f
+(1 row)
+
+ ?column? 
+----------
+ f
+(1 row)
+
+You are now connected to database "postgres" as user "postgres".
+DROP DATABASE
+DROP ROLE
+DROP ROLE

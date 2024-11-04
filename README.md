@@ -1,7 +1,15 @@
-PG Global Temporary Tables
-==========================
+* [Description](#description)
+* [Installation](#installation)
+* [Configuration](#configuration)
+* [Use of the extension](#use-of-the-extension)
+* [How the extension really works](#how-the-extension-really-works)
+* [Authors](#authors)
 
-pgtt_rsl v1.x is a PostgreSQL extension to create and manage Oracle-style
+## PostgreSQL Global Temporary Tables - RSL
+
+### [Description](#description)
+
+pgtt_rsl is a PostgreSQL extension to create and manage Oracle-style
 Global Temporary Tables. It is based on unlogged tables, Row Security
 Level and views. A background worker is responsible to periodically
 remove obsolete rows. This implementation is designed to avoid catalog
@@ -42,8 +50,7 @@ these tables. The use of Row Security Level and cleanup by a background
 worker is slower than the use of regular temporary tables. Use it only
 if you have the pg_catalog bloating issue.
 
-Installation
-============
+### [Installation](#installation)
 
 To install the pgtt_rsl extension you need a PostgreSQL version upper than
 9.5. Untar the pgtt_rsl tarball anywhere you want then you'll need to
@@ -53,8 +60,14 @@ Depending on your installation, you may need to install some devel
 package and especially the libpq devel package. Once pg_config is in
 your path, do "make", and then "make install".
 
-Configuration
-=============
+Once the extension is installed, that shared_preload_library is set and
+PostgreSQL restarted you can verify that the extension is working as
+expected using:
+
+    LANG=C psql -f test/test_gtt.sql > result.log 2>&1 && diff result.log test/expected/test_gtt.txt
+    LANG=C psql -f test/test_gtt2.sql > result.log 2>&1 && diff result.log test/expected/test_gtt2.txt
+
+### [Configuration](#configuration)
 
 The background worker used to remove obsolete rows from global
 temporary tables must be loaded on database start by adding the
@@ -92,54 +105,52 @@ The background worker will wake up each naptime interval to scan
 all database using the pgtt_rsl extension. It will then remove all rows
 that don't belong to an existing session or transaction.
 
-Use of the extension
-====================
+### [Use of the extension](#use-of-the-extension)
 
 In all database where you want to use Global Temporary Tables you
 will have to create the extension using:
 
 * CREATE EXTENSION pgtt_rsl;
 
-The extension comes with two functions that must be used instead of
+The extension comes with two functions that can be used instead of
 the CREATE GLOBAL TEMPORARY TABLE statement. To create a GTT table
-named test_table use the following statement:
+named test_table you can use the following statements:
 
-* SELECT pgtt_schema.pgtt_create_table('test_table', 'id integer, lbl text', true);
+* `CREATE GLOBAL TEMPORARY TABLE test_table (id integer, lbl text) ON COMMIT PRESERVE ROWS;`
+* `SELECT pgtt_schema.pgtt_create_table('test_table', 'id integer, lbl text', true);`
 
 The first argument of the pgtt_create_table() function is the name
 of the permanent temporary table. The second is the definition of
 the table. The third parameter is a boolean to indicate if the rows
 should be preserved at end of the transaction or deleted at commit.
 
-Here it could be like creating a table:
+The CREATE GLOBAL TEMPORARY syntax output a message saying the GLOBAL keyword
+is deprecated but this is just a warning. If you don't want to be annoyed by
+this messages, comment the GLOBAL keyword like this:
 
-	CREATE GLOBAL TEMPORARY TABLE test_table (
-		id integer,
-		lbl text
-	) ON COMMIT PRESERVE ROWS;
+* `CREATE /*GLOBAL*/ TEMPORARY TABLE test_table (id integer, lbl text) ON COMMIT PRESERVE ROWS;`
 
 Once the table is created it can be used by the application like any
 temporary table. A session will only see its rows for the time of a
 session or a transaction following if the temporary table preserves
 the rows at end of the transaction or deleted them at commit.
 
+To drop a Global Temporary Table you can use the following statements:
 
-To drop a Global Temporary Table you must use the following function:
+* `DROP TABLE test_table;`
+* `SELECT pgtt_schema.pgtt_drop_table('test_table');`
 
-* SELECT pgtt_schema.pgtt_drop_table('test_table');
+### [How the extension really works](#how-the-extension-really-works)
 
-Behind the functions
-=====================
+When you call the pgtt_create_table() function or CREATE GLOBAL TEMPORARY TABLE
+the pgtt_rsl extension act as follow:
 
-How the extension really works? When you call the pgtt_create_table()
-function the pgtt extension act as follow:
-
-  1) Create an unlogged table of the same name but prefixed with 'pgtt_'
-     with a "hidden" column 'pgtt_sessid' of custom type lsid.
-     The table is stored in extension schema pgtt_schema and the users
-     must not access to this table directly. They have to use the view
-     instead. The pgtt_sessid column has default to get_session_id(),
-     this function is part of the pgtt_extension and build a session
+  1) Create an unlogged table in the pgtt_schema schema and renamed it
+     with 'pgtt_' and the oid of the table newly created. Alter the table
+     to add an "hidden" column 'pgtt_sessid' of custom type lsid.
+     The users must not access to this table directly.
+     The pgtt_sessid column has default to get_session_id(), this
+     function is part of the pgtt_extension and build a session
      local unique id from the backend start time (epoch) and the pid.
      The custom type use is a C structure of two integers:
 
@@ -147,23 +158,29 @@ function the pgtt extension act as follow:
 	    int      backend_start_time;
 	    int      backend_pid;
 	} Lsid;
-
-  2) Create a btree index on column pgtt_sessid of special type lsid.
-  3) Grant SELECT,INSERT,UPDATE,DELETE on the table to PUBLIC.
-  4) Activate RLS on the table and create two RLS policies to hide rows
+  2) Create a view with the name and the schema of the origin global
+     temporary table. All user access to the underlying table will be
+     done through this view.
+  3) Create a btree index on column pgtt_sessid of special type lsid.
+  4) Grant SELECT,INSERT,UPDATE,DELETE on the table to PUBLIC.
+  5) Activate RLS on the table and create two RLS policies to hide rows
      to other sessions or transactions when required.
-  5) Force RLS to be active for the owner of the table.
-  6) Create an updatable view using the original table name with a
+  6) Force RLS to be active for the owner of the table.
+  7) Create an updatable view using the original table name with a
      a WHERE clause to hide the "hidden" column of the table.
-  7) Set owner of the view to current_user which might be a superuser,
+  8) Set owner of the view to current_user which might be a superuser,
      grants to other users are the responsability of the administrator.
-  8) Insert the relation between the GTT and the view in the catalog
+  9) Insert the relation between the GTT and the view in the catalog
      table pgtt_global_temp.
 
 The pgtt_drop_table() function is responsible to remove all references
 to a GTT table and its corresponding view. When it is called it just
 execute a "DROP TABLE IF EXISTS pgtt_schema.pgtt_tbname CASCADE;".
 Using CASCADE will also drop the associated view.
+
+The "DROP TABLE pgtt_table" statement will drop the view instead, the
+corresponding table in extension's schema pgtt_schema will be removed
+later by the background worker.
 
 The extension also define four functions to manipulate the 'lsid' type:
     
@@ -197,6 +214,8 @@ test=# SELECT get_session_pid(get_session_id());
 -----------------
            11007
 ```
+
+The purpose of these functions is for internal and debuging use only.
 
 Behind the background worker
 ============================
@@ -242,13 +261,15 @@ The pgtt_schema.pgtt_maintenance() has the following actions:
 The function returns the total number of rows deleted. It must not be
 run manually but only run by pgtt_bgw the background worker.
 
-Test
-====
+### [Authors](#authors)
 
-Once the extension is installed, that shared_preload_library is set and
-PostgreSQL restarted you can verify that the extension is working as
-expected using:
+- Gilles Darold
+- Julien Rouhaud
 
-    LANG=C psql -f test/test_gtt.sql > result.log 2>&1 && diff result.log test/expected/test_gtt.txt
+### [License](#license)
 
+This extension is free software distributed under the PostgreSQL
+Licence.
+
+        Copyright (c) 2018-2024, Gilles Darold
 

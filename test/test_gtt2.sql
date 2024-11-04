@@ -1,9 +1,9 @@
 ----
--- Regression test to Global Temporary Table RSL implementation with use of
--- pgtt_schema.pgtt_create_table and pgtt_schema.pgtt_drop_table functions.
+-- Regression test to Global Temporary Table RSL implementation with
+-- CREATE GLOBAL TEMPORARY and DROP TABLE syntax.
 --
--- LANG=C psql -f test/test_gtt.sql > result.txt 2>&1
--- diff result.txt test/expected/test_gtt.txt
+-- LANG=C psql -f test/test_gtt2.sql > result.txt 2>&1
+-- diff result.txt test/expected/test_gtt2.txt
 ----
 DROP DATABASE IF EXISTS gtt_testdb;
 DROP ROLE IF EXISTS test_gtt1;
@@ -20,20 +20,16 @@ CREATE DATABASE gtt_testdb OWNER test_gtt1 ;
 CREATE EXTENSION pgtt_rsl;
 
 -- Create a GTT like table to test ON COMMIT PRESERVE ROWS
-SELECT pgtt_schema.pgtt_create_table('t_glob_temptable1', 'id integer, lbl text', true);
--- This syntax is not yet available
--- CREATE GLOBAL TEMPORARY TABLE t_glob_temptable1 (id integer, lbl text) ON COMMIT PRESERVE ROWS;
+CREATE GLOBAL TEMPORARY TABLE t_glob_temptable1 (id integer, lbl text) ON COMMIT PRESERVE ROWS;
 GRANT ALL ON t_glob_temptable1 TO test_gtt1,test_gtt2;
 
 -- Create a GTT like table to test ON COMMIT DELETE ROWS using CREATE GLOBAL TEMPORARY syntax
-SELECT pgtt_schema.pgtt_create_table('t_glob_temptable2', 'SELECT id, lbl FROM t_glob_temptable1', false);
--- This syntax is not yet available
--- CREATE GLOBAL TEMPORARY TABLE t_glob_temptable2 AS (SELECT id, lbl FROM t_glob_temptable1) ON COMMIT DELETE ROWS;
+CREATE GLOBAL TEMPORARY TABLE t_glob_temptable2 ON COMMIT DELETE ROWS AS (SELECT id, lbl FROM t_glob_temptable1);
 GRANT ALL ON t_glob_temptable2 TO test_gtt1,test_gtt2;
 
 CREATE SCHEMA foo;
 GRANT ALL ON SCHEMA foo TO test_gtt1,test_gtt2;
-SELECT pgtt_schema.pgtt_create_table('t_glob_temptable1', 'id integer, lbl text', true, 'foo');
+CREATE GLOBAL TEMPORARY TABLE foo.t_glob_temptable1 (id integer, lbl text) ON COMMIT PRESERVE ROWS;
 GRANT ALL ON foo.t_glob_temptable1 TO test_gtt1,test_gtt2;
 
 CREATE FUNCTION check_pgtt_count (tbname name, nspname name DEFAULT 'public') RETURNS bigint AS $$
@@ -252,13 +248,9 @@ SELECT check_pgtt_count('t_glob_temptable2') AS "count";
 SELECT count(*) FROM t_glob_temptable2;
 
 -- Drop the global temporary tables using the two syntax
-SELECT pgtt_schema.pgtt_drop_table('t_glob_temptable1');
--- This syntax is not yet available
--- DROP TABLE t_glob_temptable2;
-SELECT pgtt_schema.pgtt_drop_table('t_glob_temptable2');
--- This syntax is not yet available
--- DROP TABLE t_glob_temptable2;
-SELECT pgtt_schema.pgtt_drop_table('t_glob_temptable1', 'foo');
+DROP TABLE t_glob_temptable1;
+DROP TABLE t_glob_temptable2;
+DROP TABLE foo.t_glob_temptable1;
 
 -- Tests of the LSID related functions
 -- Must return {1527703231,11007}
