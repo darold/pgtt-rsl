@@ -1,4 +1,4 @@
 default_version = '2.0.0'
-comment = 'Extension to add Global Temporary Tables feature to PostgreSQL'
+comment = 'Extension to add Oracle or DB2 style Global Temporary Tables feature to PostgreSQL. It is based on unlogged table, Row Security Level and views.",
 module_pathname = '$libdir/pgtt_rsl'
 relocatable = false

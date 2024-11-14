@@ -20,13 +20,13 @@
 			"file": "sql/pgtt_rsl--2.0.0.sql",
 			"docfile": "doc/pgtt_rsl.md",
 			"version": "2.0.0",
-			"abstract": "Extension to manage Global Temporary Tables"
+			"abstract": "Extension to manage Global Temporary Tables using RSL"
 		},
 		"pgtt_bgw": {
 			"file": "pgtt_bgw.so",
 			"docfile": "doc/pgtt_bgw.md",
 			"version": "2.0.0",
-			"abstract": "Background worker to remove obsolete rows in Global Temporary Tables"
+			"abstract": "Background worker to remove obsolete rows and tables for Global Temporary Tables RSL extension"
 		}
 	},
 	"meta-spec": {

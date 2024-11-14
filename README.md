@@ -9,11 +9,11 @@
 
 ### [Description](#description)
 
-pgtt_rsl is a PostgreSQL extension to create and manage Oracle-style
+pgtt_rsl is a PostgreSQL extension to create and manage Oracle or DB2 style
 Global Temporary Tables. It is based on unlogged tables, Row Security
 Level and views. A background worker is responsible to periodically
-remove obsolete rows. This implementation is designed to avoid catalog
-bloating when creating a lot of temporary tables. If you are looking
+remove obsolete rows and tables. This implementation is designed to avoid
+catalog bloating when creating a lot of temporary tables. If you are looking
 for Oracle style Global Temporary Tables but with high performances
 you should look at [pgtt](https://github.com/darold/pgtt) which is
 based on temporary tables but will not address the bloat problem.
@@ -25,13 +25,14 @@ as regular tables visible to all users but their content is relative
 to the current session or transaction. Even if the table is persistent
 a session or transaction can not see rows written by an other session.
 
-An other difference is that Oracle Global Temporary Table can be
+An other difference is that Oracle or DB2 Global Temporary Table can be
 created in any schema while it is not possible with PostgreSQL where
-temporary table are stored in the pg_temp namespace.
+temporary table are stored in the pg_temp namespace. This version of the
+extension aallow to create the global temporary table in any schema.
 
 Usually this is not a problem, you have learn to deal with the
 temporary table behavior of PostgreSQL but the problem comes when
-you are migrating an Oracle database to PostgreSQL. You have to
+you are migrating an Oracle or DB2 database to PostgreSQL. You have to
 rewrite the SQL and plpgsql code to follow the application logic and
 use PostgreSQL temporary table, that mean recreating the temporary
 table everywhere it is used.
@@ -64,8 +65,8 @@ Once the extension is installed, that shared_preload_library is set and
 PostgreSQL restarted you can verify that the extension is working as
 expected using:
 
-    LANG=C psql -f test/test_gtt.sql > result.log 2>&1 && diff result.log test/expected/test_gtt.txt
-    LANG=C psql -f test/test_gtt2.sql > result.log 2>&1 && diff result.log test/expected/test_gtt2.txt
+- `LANG=C psql -f test/test_gtt.sql > result.log 2>&1 && diff result.log test/expected/test_gtt.txt`
+- `LANG=C psql -f test/test_gtt2.sql > result.log 2>&1 && diff result.log test/expected/test_gtt2.txt`
 
 ### [Configuration](#configuration)
 
@@ -114,7 +115,7 @@ will have to create the extension using:
 
 The extension comes with two functions that can be used instead of
 the CREATE GLOBAL TEMPORARY TABLE statement. To create a GTT table
-named test_table you can use the following statements:
+named test_table you can use one of the following statements:
 
 * `CREATE GLOBAL TEMPORARY TABLE test_table (id integer, lbl text) ON COMMIT PRESERVE ROWS;`
 * `SELECT pgtt_schema.pgtt_create_table('test_table', 'id integer, lbl text', true);`
@@ -135,7 +136,7 @@ temporary table. A session will only see its rows for the time of a
 session or a transaction following if the temporary table preserves
 the rows at end of the transaction or deleted them at commit.
 
-To drop a Global Temporary Table you can use the following statements:
+To drop a Global Temporary Table you can use one of the following statements:
 
 * `DROP TABLE test_table;`
 * `SELECT pgtt_schema.pgtt_drop_table('test_table');`
@@ -153,11 +154,12 @@ the pgtt_rsl extension act as follow:
      function is part of the pgtt_extension and build a session
      local unique id from the backend start time (epoch) and the pid.
      The custom type use is a C structure of two integers:
-
+```
 	typedef struct Lsid {
 	    int      backend_start_time;
 	    int      backend_pid;
 	} Lsid;
+```
   2) Create a view with the name and the schema of the origin global
      temporary table. All user access to the underlying table will be
      done through this view.
@@ -264,7 +266,6 @@ run manually but only run by pgtt_bgw the background worker.
 ### [Authors](#authors)
 
 - Gilles Darold
-- Julien Rouhaud
 
 ### [License](#license)
 
