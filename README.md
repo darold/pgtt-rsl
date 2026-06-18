@@ -272,5 +272,5 @@ run manually but only run by pgtt_bgw the background worker.
 This extension is free software distributed under the PostgreSQL
 Licence.
 
-        Copyright (c) 2018-2024, Gilles Darold
+        Copyright (c) 2018-2026, Gilles Darold
 
